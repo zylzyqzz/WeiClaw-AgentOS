@@ -1,4 +1,4 @@
-﻿import { spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -21,17 +21,6 @@ import type { WizardPrompter } from "../wizard/prompts.js";
 import { WizardCancelledError } from "../wizard/prompts.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../agents/workspace.js";
 import { probeGatewayReachable } from "./onboard-helpers.js";
-import {
-  applyKimiCodeConfig,
-  applyMoonshotConfig,
-  applyQianfanConfig,
-  applyQianfanProviderConfig,
-  applyMoonshotProviderConfig,
-  applyKimiCodeProviderConfig,
-  setKimiCodingApiKey,
-  setMoonshotApiKey,
-  setQianfanApiKey,
-} from "./onboard-auth.js";
 import { resolveGatewayInstallToken } from "./gateway-install-token.js";
 import {
   buildGatewayInstallPlan,
