@@ -51,6 +51,21 @@ describe("cli json output and exit codes", () => {
       expect(runObj.selectedRoles).toBeInstanceOf(Array);
       expect(runObj.selectionReasons).toBeInstanceOf(Array);
       expect(runObj.result.routeSummary).toBe(runObj.routeSummary);
+
+      const demo = runCli(root, ["demo", "--json"]);
+      expect(demo.status).toBe(0);
+      const demoObj = JSON.parse(demo.stdout);
+      expect(demoObj.ok).toBe(true);
+      expect(demoObj.command).toBe("demo");
+      expect(demoObj.routeSummary).toContain("route");
+
+      const memory = runCli(root, ["inspect-memory", "--session", "demo-main", "--json"]);
+      expect(memory.status).toBe(0);
+      const memoryObj = JSON.parse(memory.stdout);
+      expect(memoryObj.ok).toBe(true);
+      expect(memoryObj.command).toBe("inspect-memory");
+      expect(memoryObj.result.records).toBeInstanceOf(Array);
+      expect(memoryObj.result.summary.total).toBeTypeOf("number");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -98,6 +113,12 @@ describe("cli json output and exit codes", () => {
       expect(validateErr.ok).toBe(false);
       expect(validateErr.command).toBe("validate-preset");
       expect(validateErr.error.code).toBe("VALIDATION_FAILED");
+
+      const unknown = runCli(root, ["no-such-command", "--json"]);
+      expect(unknown.status).toBe(1);
+      const unknownErr = JSON.parse(unknown.stderr);
+      expect(unknownErr.error.code).toBe("UNKNOWN_COMMAND");
+      expect(String(unknownErr.error.message)).toContain("Use:");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

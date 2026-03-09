@@ -26,6 +26,7 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
     this.db = new DatabaseSync(this.dbPath);
     this.db.exec(`
       PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 3000;
 
       CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY,
@@ -87,7 +88,9 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async upsertSession(state: SessionState): Promise<void> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     this.db
       .prepare(`
         INSERT INTO sessions (session_id, active_task_id, status, updated_at, meta_json)
@@ -108,9 +111,13 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async getSession(sessionId: string): Promise<SessionState | null> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     const row = this.db
-      .prepare(`SELECT session_id, active_task_id, status, updated_at, meta_json FROM sessions WHERE session_id = ?`)
+      .prepare(
+        `SELECT session_id, active_task_id, status, updated_at, meta_json FROM sessions WHERE session_id = ?`,
+      )
       .get(sessionId) as
       | {
           session_id: string;
@@ -120,7 +127,9 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
           meta_json: string;
         }
       | undefined;
-    if (!row) {return null;}
+    if (!row) {
+      return null;
+    }
     return {
       sessionId,
       activeTaskId: row.active_task_id ?? undefined,
@@ -133,7 +142,9 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   async appendMemory(
     input: Omit<MemoryRecord, "id" | "createdAt"> & { id?: string; createdAt?: string },
   ): Promise<MemoryRecord> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     const record: MemoryRecord = {
       id: input.id ?? randomUUID(),
       createdAt: input.createdAt ?? new Date().toISOString(),
@@ -163,8 +174,15 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
     return record;
   }
 
-  async listMemory(query: { sessionId?: string; layer?: string; scope?: string; limit?: number }): Promise<MemoryRecord[]> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+  async listMemory(query: {
+    sessionId?: string;
+    layer?: string;
+    scope?: string;
+    limit?: number;
+  }): Promise<MemoryRecord[]> {
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     const where: string[] = [];
     const args: Array<string | number> = [];
     if (query.sessionId) {
@@ -211,7 +229,9 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async upsertRoleTemplate(template: RoleTemplate): Promise<void> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     this.db
       .prepare(`
         INSERT INTO role_templates (id, payload_json, updated_at)
@@ -222,28 +242,38 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async getRoleTemplate(templateId: string): Promise<RoleTemplate | null> {
-    if (!this.db) {throw new Error("Storage not initialized");}
-    const row = this.db.prepare(`SELECT payload_json FROM role_templates WHERE id = ?`).get(templateId) as
-      | { payload_json: string }
-      | undefined;
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
+    const row = this.db
+      .prepare(`SELECT payload_json FROM role_templates WHERE id = ?`)
+      .get(templateId) as { payload_json: string } | undefined;
     return row ? parseJson<RoleTemplate>(row.payload_json) : null;
   }
 
   async listRoleTemplates(): Promise<RoleTemplate[]> {
-    if (!this.db) {throw new Error("Storage not initialized");}
-    const rows = this.db.prepare(`SELECT payload_json FROM role_templates ORDER BY id ASC`).all() as Array<{
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
+    const rows = this.db
+      .prepare(`SELECT payload_json FROM role_templates ORDER BY id ASC`)
+      .all() as Array<{
       payload_json: string;
     }>;
     return rows.map((row) => parseJson<RoleTemplate>(row.payload_json));
   }
 
   async deleteRoleTemplate(templateId: string): Promise<void> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     this.db.prepare(`DELETE FROM role_templates WHERE id = ?`).run(templateId);
   }
 
   async upsertRuntimeAgent(agent: RuntimeAgent): Promise<void> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     this.db
       .prepare(`
         INSERT INTO runtime_agents (id, payload_json, updated_at)
@@ -254,28 +284,38 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async getRuntimeAgent(agentId: string): Promise<RuntimeAgent | null> {
-    if (!this.db) {throw new Error("Storage not initialized");}
-    const row = this.db.prepare(`SELECT payload_json FROM runtime_agents WHERE id = ?`).get(agentId) as
-      | { payload_json: string }
-      | undefined;
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
+    const row = this.db
+      .prepare(`SELECT payload_json FROM runtime_agents WHERE id = ?`)
+      .get(agentId) as { payload_json: string } | undefined;
     return row ? parseJson<RuntimeAgent>(row.payload_json) : null;
   }
 
   async listRuntimeAgents(): Promise<RuntimeAgent[]> {
-    if (!this.db) {throw new Error("Storage not initialized");}
-    const rows = this.db.prepare(`SELECT payload_json FROM runtime_agents ORDER BY id ASC`).all() as Array<{
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
+    const rows = this.db
+      .prepare(`SELECT payload_json FROM runtime_agents ORDER BY id ASC`)
+      .all() as Array<{
       payload_json: string;
     }>;
     return rows.map((row) => parseJson<RuntimeAgent>(row.payload_json));
   }
 
   async deleteRuntimeAgent(agentId: string): Promise<void> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     this.db.prepare(`DELETE FROM runtime_agents WHERE id = ?`).run(agentId);
   }
 
   async upsertPreset(preset: PresetDefinition): Promise<void> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     this.db
       .prepare(`
         INSERT INTO presets (id, payload_json, updated_at)
@@ -286,7 +326,9 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async getPreset(presetId: string): Promise<PresetDefinition | null> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     const row = this.db.prepare(`SELECT payload_json FROM presets WHERE id = ?`).get(presetId) as
       | { payload_json: string }
       | undefined;
@@ -294,20 +336,28 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async listPresets(): Promise<PresetDefinition[]> {
-    if (!this.db) {throw new Error("Storage not initialized");}
-    const rows = this.db.prepare(`SELECT payload_json FROM presets ORDER BY id ASC`).all() as Array<{
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
+    const rows = this.db
+      .prepare(`SELECT payload_json FROM presets ORDER BY id ASC`)
+      .all() as Array<{
       payload_json: string;
     }>;
     return rows.map((row) => parseJson<PresetDefinition>(row.payload_json));
   }
 
   async deletePreset(presetId: string): Promise<void> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     this.db.prepare(`DELETE FROM presets WHERE id = ?`).run(presetId);
   }
 
   async getRuntimeConfig(): Promise<Partial<OrchestratorConfig> | null> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     const row = this.db
       .prepare(`SELECT value_json FROM config_state WHERE key = 'runtime_config'`)
       .get() as { value_json: string } | undefined;
@@ -315,7 +365,9 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async setRuntimeConfig(config: Partial<OrchestratorConfig>): Promise<void> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     this.db
       .prepare(`
         INSERT INTO config_state (key, value_json, updated_at)
@@ -326,7 +378,9 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async getMeta(key: string): Promise<string | null> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     const row = this.db.prepare(`SELECT value FROM meta_state WHERE key = ?`).get(key) as
       | { value: string }
       | undefined;
@@ -334,7 +388,9 @@ export class SqliteAgentOsStorage implements AgentOsStorage {
   }
 
   async setMeta(key: string, value: string): Promise<void> {
-    if (!this.db) {throw new Error("Storage not initialized");}
+    if (!this.db) {
+      throw new Error("Storage not initialized");
+    }
     this.db
       .prepare(`
         INSERT INTO meta_state (key, value, updated_at)

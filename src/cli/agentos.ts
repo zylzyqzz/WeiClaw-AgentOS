@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 import { stdin as input, stdout as output } from "node:process";
 import readline from "node:readline/promises";
-import {
-  readPresetBundleFile,
-  writePresetBundleFile,
-} from "../agentos/config/store.js";
+import { readPresetBundleFile, writePresetBundleFile } from "../agentos/config/store.js";
 import { inspectPreset, listPresets } from "../agentos/registry/preset-utils.js";
 import { readRoleBundleJson, writeRoleBundleJson } from "../agentos/registry/role-io.js";
 import { validatePreset, validateRoleBundle } from "../agentos/registry/role-validation.js";
@@ -26,6 +23,20 @@ const jsonMode = rawArgv.includes("--json");
 const argv = rawArgv.filter((arg) => arg !== "--json");
 const AGENTOS_CLI_VERSION = "2.1.0-alpha";
 
+const nativeEmitWarning = process.emitWarning.bind(process);
+process.emitWarning = ((warning: unknown, ...rest: unknown[]) => {
+  const message =
+    warning instanceof Error
+      ? warning.message
+      : typeof warning === "string"
+        ? warning
+        : String(warning);
+  if (message.includes("SQLite is an experimental feature")) {
+    return undefined as void;
+  }
+  return nativeEmitWarning(warning as string, ...(rest as []));
+}) as typeof process.emitWarning;
+
 class CliError extends Error {
   constructor(
     public readonly code: string,
@@ -45,6 +56,12 @@ interface EnvelopeInput<T> {
   selectionReasons?: string[];
   lintFindings?: LintResult["findings"];
   metadata?: Record<string, unknown>;
+}
+
+interface MemorySummary {
+  total: number;
+  byLayer: Record<string, number>;
+  latestAt?: string;
 }
 
 function getArg(name: string): string | undefined {
@@ -78,6 +95,18 @@ function parseBool(name: string, fallback: boolean): boolean {
 function parseIntSafe(name: string, fallback: number): number {
   const n = Number(getArg(name) ?? String(fallback));
   return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+function buildMemorySummary(rows: Array<{ layer: string; createdAt: string }>): MemorySummary {
+  const byLayer: Record<string, number> = {};
+  for (const row of rows) {
+    byLayer[row.layer] = (byLayer[row.layer] ?? 0) + 1;
+  }
+  return {
+    total: rows.length,
+    byLayer,
+    latestAt: rows[0]?.createdAt,
+  };
 }
 
 function emitSuccess<T>(payload: EnvelopeInput<T>, human?: () => void): void {
@@ -324,13 +353,72 @@ async function inspectMemoryCommand() {
     const rows = layer
       ? await runtime.memory.inspectByLayer(sessionId, layer, 50)
       : await runtime.memory.inspect(sessionId, 50);
+    const summary = buildMemorySummary(rows);
     emitSuccess(
       {
         command: "inspect-memory",
-        result: rows,
+        result: { records: rows, summary },
         metadata: { consistencyIssues: runtime.consistencyIssues },
       },
-      () => console.log(JSON.stringify(rows, null, 2)),
+      () => {
+        console.log(`session: ${sessionId}`);
+        console.log(`total: ${summary.total}`);
+        console.log(`latestAt: ${summary.latestAt ?? "n/a"}`);
+        console.table(
+          Object.entries(summary.byLayer).map(([layerName, count]) => ({
+            layer: layerName,
+            count,
+          })),
+        );
+        console.table(
+          rows.map((row) => ({
+            id: row.id,
+            layer: row.layer,
+            scope: row.scope,
+            createdAt: row.createdAt,
+            content: row.content.slice(0, 80),
+          })),
+        );
+      },
+    );
+  } finally {
+    await runtime.storage.close();
+  }
+}
+
+async function demoCommand() {
+  const runtime = await createAgentOsRuntime();
+  const sessionId = getArg("session") ?? "demo-main";
+  const preset = getArg("preset") ?? runtime.config.defaultPreset;
+  const goal =
+    getArg("goal") ??
+    "Design a minimal alpha release checklist and identify top 3 risks for this repository.";
+  try {
+    const result = await runtime.orchestrator.run({
+      sessionId,
+      goal,
+      preset,
+      taskType: "review",
+    });
+    emitSuccess(
+      {
+        command: "demo",
+        routeSummary: result.routeSummary,
+        selectedRoles: result.selectedRoles,
+        selectionReasons: result.selectionReasons,
+        result,
+        metadata: {
+          preset,
+          consistencyIssues: runtime.consistencyIssues,
+        },
+      },
+      () => {
+        console.log(`goal: ${goal}`);
+        console.log(`routeSummary: ${result.routeSummary}`);
+        console.log(`selectedRoles: ${result.selectedRoles.join(", ")}`);
+        console.log(`selectionReasons: ${result.selectionReasons.join(" | ")}`);
+        console.log(`conclusion: ${result.conclusion}`);
+      },
     );
   } finally {
     await runtime.storage.close();
@@ -885,10 +973,20 @@ async function main() {
     console.log(
       [
         "Usage: node --import tsx src/cli/agentos.ts <command> [options] [--json]",
+        "Alias: pnpm agentos -- <command> [options] [--json]",
+        "",
+        "Quick Start:",
+        "  demo",
+        '  run --goal "implement role-based routing" --preset default-demo',
+        "  list-roles",
+        "  inspect-memory --session demo-main",
+        "",
         "Commands:",
+        "  demo [--goal <text>] [--preset <id>] [--session <id>]",
         "  run --goal <text> [--roles a,b] [--preset <id>] [--required-capabilities a,b] [--preferred-roles a,b] [--excluded-roles a,b]",
         "  chat [--roles a,b] [--preset <id>]",
-        "  list-roles | list-agents",
+        "  list-roles",
+        "  list-agents (compat alias)",
         "  inspect-role --id <roleId>",
         "  create-role --id <roleId> ...",
         "  update-role --id <roleId> ...",
@@ -907,12 +1005,18 @@ async function main() {
         "  import-preset --file <path.json> [--overwrite true|false]",
         "  validate-preset --id <presetId> | --file <path.json>",
         "  inspect-memory [--session <id>] [--layer short-term|long-term|project-entity]",
+        "",
+        "JSON mode:",
+        "  append --json to any command above for machine-readable output",
       ].join("\n"),
     );
     return;
   }
 
   switch (command) {
+    case "demo":
+      await demoCommand();
+      return;
     case "run":
       await runCommand();
       return;
@@ -980,7 +1084,11 @@ async function main() {
       await listAgentsAliasCommand();
       return;
     default:
-      throw new CliError("UNKNOWN_COMMAND", 1, `Unknown command: ${command}`);
+      throw new CliError(
+        "UNKNOWN_COMMAND",
+        1,
+        `Unknown command: ${command}. Use: pnpm agentos -- help`,
+      );
   }
 }
 
@@ -1014,9 +1122,7 @@ main().catch((err) => {
         details: cliErr.details,
       },
     };
-    console.error(
-      JSON.stringify(payload, null, 2),
-    );
+    console.error(JSON.stringify(payload, null, 2));
   } else {
     console.error(`[agentos] ${cliErr.code}: ${cliErr.message}`);
     if (cliErr.details) {

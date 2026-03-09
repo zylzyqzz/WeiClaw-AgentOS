@@ -2,7 +2,7 @@
 
 ## Core model
 
-WeiClaw-AgentOS alpha is a **dynamic-role + durable-memory** local-first runtime.
+WeiClaw-AgentOS is a **dynamic-role + durable-memory** local-first runtime.
 
 - `RoleTemplate` = 角色模板（稳定职责定义）
 - `RuntimeAgent` = 运行时实例（可启停、可升级、可路由）
@@ -11,13 +11,14 @@ WeiClaw-AgentOS alpha is a **dynamic-role + durable-memory** local-first runtime
 
 `commander / planner / builder / reviewer` only exist as default demo preset seed and are not hardcoded runtime dependencies.
 
-## Source of truth
+## Single runtime tree
 
-`src/agentos/*` is the single runtime implementation tree:
+`src/agentos/*` is the runtime implementation source:
 
 - `types.ts`
 - `config/loader.ts`
 - `storage/*`
+- `repository/agentos-repository.ts`
 - `registry/*`
 - `session/session-store.ts`
 - `memory/memory-manager.ts`
@@ -26,84 +27,84 @@ WeiClaw-AgentOS alpha is a **dynamic-role + durable-memory** local-first runtime
 
 CLI entry: `src/cli/agentos.ts`
 
-Persistence source of truth:
+## Persistence model (source of truth)
 
-- `RoleTemplate` / `RuntimeAgent` / `Preset` / runtime config are persisted in `AgentOsStorage` (SQLite first, file fallback).
-- `.weiclaw-agentos.json` is deprecated and treated as legacy compatibility input only (migration source), not active runtime source.
-- Startup flow:
+- Runtime source-of-truth: `AgentOsStorage` (`SQLite` first, file fallback).
+- Persisted domains: `RoleTemplate`, `RuntimeAgent`, `Preset`, runtime config patch, migration metadata.
+- Deprecated compatibility input: `.weiclaw-agentos.json` (migration source only, not active runtime writer).
+
+Startup flow:
+
 1. load base defaults from `config/loader.ts`
-2. run one-time legacy migration into storage (`AgentOsRepository`)
-3. merge runtime config patch + persisted presets
-4. run consistency checks (`defaultPreset`, preset-role references, preset order mismatch)
-- If legacy data is detected at startup, CLI logs a migration warning and completion/failure status.
-- Consistency findings carry `level/code/message/fixHint` and are surfaced in CLI JSON `metadata.consistencyIssues`.
+2. run one-time legacy migration in `AgentOsRepository`
+3. merge persisted runtime config patch and persisted presets
+4. run consistency checks and surface findings
 
-## Routing order
+Consistency findings include:
 
-Task routing order is strict:
+- `level`
+- `code`
+- `message`
+- `fixHint`
+
+## Routing order and decision
+
+Routing order is strict:
 
 1. explicit roles (`run --roles`)
 2. preset (`run --preset`)
-3. dynamic capability route (`taskType/constraints/requiredCapabilities/preferredRoles/excludedRoles`)
+3. dynamic route fallback
 
-Dynamic route is configuration-driven via `OrchestratorConfig.routing`:
+Dynamic route is config-driven by `OrchestratorConfig.routing`:
 
-- `taskTypeRules`: `taskType -> requiredCapabilities/preferredRoles/excludedRoles`
-- `capabilityKeywords`: keyword-to-capability scoring map
-- `weights`: `requiredCapability`, `preferredRole`, `keywordMatch`, `coordinationConstraint`
-- `maxDynamicRoles`: top-N role selection cap
+- `taskTypeRules`
+- `capabilityKeywords`
+- `weights`
+- `maxDynamicRoles`
 
-Decision explanation is emitted via:
-
-- `routeSummary`
-- `selectedRoles`
-- `selectionReasons`
-
-Result contract includes:
+Decision explainability fields:
 
 - `routeSummary`
 - `selectedRoles`
 - `selectionReasons`
-- `conclusion`
-- `plan`
-- `risks`
-- `acceptance`
 
-## Role lifecycle
+## Memory model
 
-Role lifecycle commands:
+Three layers are currently written on each successful run:
 
-- `create-role`
-- `update-role`
-- `disable-role`
-- `enable-role`
-- `delete-role`
-- `export-role`
-- `import-role`
-- `validate-role`
-- `create-preset`
-- `update-preset`
-- `delete-preset`
-- `export-preset`
-- `import-preset`
-- `validate-preset`
+- `short-term` session goal trace
+- `long-term` summarized conclusion
+- `project-entity` project-level completion note
 
-Preset commands:
+Current scope:
 
-- `list-presets`
-- `inspect-preset`
+- focused on observability and local debugging
+- not a full memory compression pipeline
 
-Compatibility alias:
+Inspectability:
 
-- `list-agents` (alias of `list-roles`)
+- `inspect-memory` returns `records + summary`
+- layer filtering supported via `--layer`
 
-Machine-readable mode:
+## CLI and JSON contract
 
-- `--json` on core commands (`run`, `validate-role`, `validate-preset`, `inspect-role`, `inspect-preset`, `list-roles`, `list-presets`)
-- unified envelope + error object documented in `docs/cli-schema.md`
-- stable exit codes (`0` success, `2` validation failed, `3` not found/conflict, `1` generic)
+Core machine-readable commands support `--json` with unified envelope.
 
-Semantic lint output:
+See authoritative schema contract: `docs/cli-schema.md`
 
-- schema: `level` / `code` / `message` / `target`
-- levels: `error` / `warning`
+Exit code contract:
+
+- `0` success
+- `1` generic/bad-request/unexpected
+- `2` validation failure
+- `3` not-found/conflict
+
+## Document authority
+
+Authoritative docs:
+
+- `docs/architecture.md`
+- `docs/roadmap.md`
+- `docs/cli-schema.md`
+
+`docs/agentos/*` files are supplemental/archive context and must not conflict with authoritative docs.

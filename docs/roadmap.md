@@ -1,26 +1,26 @@
 # WeiClaw-AgentOS Roadmap
 
-## v2.1.0 alpha (current)
+## v2.1.0 alpha (current baseline)
 
 - dynamic role model (`RoleTemplate` + `RuntimeAgent`)
 - role lifecycle closed loop (create/update/enable/disable/delete/import/export/validate)
 - preset lifecycle closed loop (create/update/delete/import/export/validate)
 - routing with explicit roles / preset / dynamic capability selection
-- preset inspection and validation
-- structured run output with route reasoning
+- route explanation output (`routeSummary/selectedRoles/selectionReasons`)
 - semantic lint findings (`level/code/message/target`)
-- machine-readable CLI mode (`--json` + unified error payload/exit codes)
-- local-first persistence (SQLite primary, file fallback)
+- machine-readable CLI envelope (`--json`, unified error payload/exit codes)
+- local-first persistence source-of-truth (SQLite primary, file fallback, legacy migration)
 
-## Next
+## RC focus (toward v2.1.0-rc.1)
 
-- preset editing and persistence workflow from CLI
-- richer role validation semantics (tool policy and memory scope linting)
-- stronger dynamic routing scoring and explainability
-- broader error recovery coverage
+- docs consistency and onboarding clarity
+- CLI ergonomics and self-explanatory help/error paths
+- JSON contract stability and regression coverage
+- routing/memory debugability and maintenance readability
+- repository hygiene (terminology and legacy boundaries)
 
-## Later
+## Post-RC candidates
 
 - role version migration helpers
-- memory lifecycle operations (prune/archive/import)
-- higher-scale profiling for larger dynamic role graphs
+- memory lifecycle ops (prune/archive/import)
+- broader load/perf profiling on larger role graphs

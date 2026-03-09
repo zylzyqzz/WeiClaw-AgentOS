@@ -1,6 +1,13 @@
 export * from "./types.js";
 export * from "./config/loader.js";
-export * from "./config/store.js";
+export { readPresetBundleFile, writePresetBundleFile } from "./config/store.js";
+// Deprecated compatibility exports: do not use as runtime source-of-truth.
+export {
+  resolveLegacyConfigPath,
+  legacyConfigExists,
+  readLegacyConfigFile,
+  writeLegacyConfigFile,
+} from "./config/store.js";
 export * from "./storage/storage.js";
 export * from "./storage/factory.js";
 export * from "./storage/sqlite-storage.js";

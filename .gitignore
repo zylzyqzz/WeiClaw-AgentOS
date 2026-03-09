@@ -94,6 +94,8 @@ USER.md
 .agent/*.json
 !.agent/workflows/
 /local/
+.weiclaw-agentos/
+.weiclaw-agentos.json
 package-lock.json
 .claude/
 .agents/

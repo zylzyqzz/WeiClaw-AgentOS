@@ -1,322 +1,181 @@
-# WeiClaw 极简私有助手
+# WeiClaw-AgentOS
 
-```
-╔══════════════════╗
-║    WeiClaw      ║
-║  极简私有助手    ║
-╚══════════════════╝
-```
+WeiClaw-AgentOS 是一个**本地优先（local-first）**的多智能体执行内核，核心路线是：
 
-**Minimal private agent** - 基于 OpenClaw 改造的极简私有 AI 助手。
+- **动态角色系统（Dynamic Roles）**
+- **长久记忆（Durable Memory）**
 
-## 项目亮点
+目标是让你可以在本地把角色编排、路由决策、结构化输出、记忆沉淀跑通，并且能被上层系统稳定接入。
 
-- **极简安装**：一行命令完成安装，自动引导配置
-- **私有部署**：本地运行，数据不离开你的设备
-- **多模型支持**：接入 OpenAI Compatible API（百度千帆、Moonshot、Kimi 等）
-- **多通道接入**：Telegram、Feishu/Lark
-- **终端交互**：内置 TUI，可在终端直接对话
-- **国际/中国双入口**：全球网络与中国大陆网络分别优化
+## 项目定位
 
-## 当前状态
+适合：
 
-### ✅ 已完成
+- 需要可扩展多角色执行流的工程团队
+- 需要稳定 CLI JSON 契约的集成方
+- 需要“可解释路由 + 可审计记忆”的本地系统
 
-- WeiClaw 主 CLI 及 `openclaw` 兼容别名
-- Bootstrap 极简安装流程（选模型 → 选通道 → 填凭证 → 选 TUI）
-- Telegram 通道完整支持
-- Feishu/Lark 通道（需在引导流程中手动选择安装）
-- 基础命令：`setup --bootstrap`、`configure`、`doctor`、`status`、`tui`
-- Gateway 运行在端口 `19789`
-- 国际/中国双安装入口
+不适合：
 
-### 🔄 完善中
+- 期望开箱即用的复杂云编排平台
+- 期望可视化前端工作台（本仓当前不做前端大工程）
 
-- npm runtime 包发布闭环（当前依赖 GitHub Release + ghproxy.net 回退）
-- 更稳定的国内分发源
+## 当前版本状态
 
-## WeiClaw-AgentOS MVP（v2.1.0 alpha）
+- **状态**：`v2.1.0-alpha`（正在收口至 `v2.1.0-rc.1`）
+- **能力等级**：动态角色 + preset + 路由配置化 + JSON 契约 + 三层记忆
+- **兼容说明**：`.weiclaw-agentos.json` 已 deprecated，仅用于一次性迁移
 
-当前能力已升级为“动态角色 + 长久记忆 + 可解释任务路由”。
+## 核心能力
 
-术语：
+- 动态角色模型：`RoleTemplate` + `RuntimeAgent`
+- 角色生命周期：create/update/enable/disable/delete/import/export/validate
+- preset 生命周期：create/update/delete/import/export/validate
+- 路由优先级：`--roles` > `--preset` > dynamic route
+- 路由可解释：`routeSummary` / `selectedRoles` / `selectionReasons`
+- 机器可读输出：`--json` + 统一错误对象 + 稳定 exit code
+- 本地存储：SQLite 优先，文件 fallback
+- 三层记忆：`short-term` / `long-term` / `project-entity`
 
-- `RoleTemplate` = 角色模板
-- `RuntimeAgent` = 运行时实例
-- `Preset` = 预设组合
-- `AgentRegistry` = 角色注册中心
+## 核心概念
 
-默认 `commander/planner/builder/reviewer` 仅作为 demo preset，不是底层固定依赖。
+- `RoleTemplate`：角色模板。定义职责、目标、输入输出契约、默认策略。
+- `RuntimeAgent`：运行时实例。由模板实例化，可启用/禁用/更新。
+- `Preset`：预设组合。定义角色集合、顺序、默认策略、适用任务类型。
+- `Orchestrator`：编排与路由核心。按优先级选择执行角色并输出结构化结果。
+- `Memory layers`：记忆分层。会话短记忆、长期摘要记忆、项目实体记忆。
 
-核心能力：
+## 快速开始（5 分钟）
 
-- 动态角色模型（模板 + 运行时实例，支持版本/标签/策略/记忆范围）
-- 角色生命周期闭环（create/update/enable/disable/delete/export/import/validate）
-- 单一来源持久化（role/preset/runtime config 统一写入 storage；`.weiclaw-agentos.json` 已 deprecated，仅用于兼容迁移）
-- 任务路由优先级：`--roles` > `--preset` > 动态能力路由
-- 动态路由配置化（`taskTypeRules` + `capabilityKeywords` + `weights`）
-- 路由结果可解释输出：`routeSummary` / `selectedRoles` / `selectionReasons`
-- preset 生命周期闭环（create/update/delete/export/import/validate）
-- 语义 lint（policy/capability/memoryScope/preset 引用与顺序冲突）
-- 机器可读输出（`--json` + 统一错误结构 + 稳定 exit code）
-- 三层记忆（short-term / long-term / project-entity）
-- SQLite 优先 + 文件回退
-
-契约文档：
-
-- CLI JSON schema: `docs/cli-schema.md`
-- 架构权威文档: `docs/architecture.md`
-
-CLI 示例：
+前置：Node 22+、pnpm。
 
 ```bash
+pnpm install
+pnpm tsgo
+```
+
+第一轮验证：
+
+```bash
+pnpm agentos -- demo
 pnpm agentos -- list-roles
-pnpm agentos -- create-role --id qa --name QA --system-instruction "review quality" --capabilities qa,review
-pnpm agentos -- update-role --id qa --goals "prevent regressions" --version 1.0.1
-pnpm agentos -- validate-role --id qa
-pnpm agentos -- export-role --id qa --file /tmp/qa-role.json
-pnpm agentos -- import-role --file /tmp/qa-role.json --overwrite true
-pnpm agentos -- validate-role --id qa --json
 pnpm agentos -- list-presets
-pnpm agentos -- create-preset --id qa-only --roles reviewer --order reviewer --task-types review,qa
-pnpm agentos -- update-preset --id qa-only --version 1.0.1 --enabled true
-pnpm agentos -- validate-preset --id qa-only
-pnpm agentos -- export-preset --id qa-only --file /tmp/qa-only-preset.json
-pnpm agentos -- import-preset --file /tmp/qa-only-preset.json --overwrite true
+pnpm agentos -- inspect-memory --session demo-main
+```
+
+JSON 接入验证：
+
+```bash
+pnpm agentos -- run --goal "生成 alpha 发布检查清单" --preset default-demo --json
+```
+
+## 最小 Demo（推荐）
+
+### Demo 命令
+
+```bash
+pnpm agentos -- demo
+```
+
+默认会触发 preset 路由，并输出：
+
+- `routeSummary`
+- `selectedRoles`
+- `selectionReasons`
+- `conclusion/plan/risks/acceptance`
+
+### 强制显式角色
+
+```bash
+pnpm agentos -- run --goal "评审当前实现风险" --roles planner,reviewer
+```
+
+### 动态路由兜底
+
+```bash
+pnpm agentos -- run --goal "调查并制定修复方案" --task-type research --required-capabilities research,review --preset ""
+```
+
+## CLI 常用命令
+
+```bash
+# 角色
+pnpm agentos -- list-roles
+pnpm agentos -- inspect-role --id planner
+pnpm agentos -- create-role --id qa --name QA --capabilities qa,review
+pnpm agentos -- validate-role --id qa
+
+# 预设
+pnpm agentos -- list-presets
 pnpm agentos -- inspect-preset --id default-demo
-pnpm agentos -- run --goal "实现本地多智能体 alpha" --roles commander,qa
-pnpm agentos -- run --goal "检查风险" --preset default-demo --required-capabilities review
-pnpm agentos -- run --goal "机器可读路由输出" --preset default-demo --json
+pnpm agentos -- create-preset --id qa-only --roles reviewer --order reviewer --task-types qa,review
+pnpm agentos -- validate-preset --id qa-only
+
+# 运行
+pnpm agentos -- run --goal "实现动态路由" --preset default-demo
+pnpm agentos -- run --goal "仅按角色执行" --roles planner,builder
+
+# 记忆
+pnpm agentos -- inspect-memory --session local-main
+pnpm agentos -- inspect-memory --session local-main --layer long-term
 ```
 
-## 快速开始
+兼容别名：`list-agents`（建议优先使用 `list-roles`）。
 
-### 国际网络安装
+## JSON 输出示例
 
-#### macOS / Linux
+```json
+{
+  "ok": true,
+  "command": "run",
+  "version": "2.1.0-alpha",
+  "routeSummary": "preset route (default-demo)",
+  "selectedRoles": ["commander", "planner", "builder", "reviewer"],
+  "selectionReasons": ["priority: preset (second)", "preset selected: default-demo"],
+  "result": {
+    "conclusion": "..."
+  },
+  "metadata": {
+    "generatedAt": "2026-03-09T00:00:00.000Z"
+  }
+}
+```
+
+更多契约细节见：`docs/cli-schema.md`。
+
+## 文档入口
+
+- 架构：`docs/architecture.md`
+- 路线图：`docs/roadmap.md`
+- 快速上手：`docs/getting-started.md`
+- CLI 使用：`docs/cli-usage.md`
+- 示例任务：`docs/examples.md`
+- 扩展指南：`docs/extension-guide.md`
+- JSON 契约：`docs/cli-schema.md`
+
+## 已知限制
+
+- 当前执行输出为规则编排与结构化文本结果，不是复杂分布式执行引擎。
+- 记忆策略为 alpha 版本，聚焦可观察与可追踪，不追求高级压缩算法。
+- 路由是可配置评分策略，不是学习型智能路由器。
+- `chat` 适合本地调试，不建议当作生产协议层。
+
+## 开发者扩展入口
+
+- 扩展角色：`create-role` / `update-role` / `import-role`
+- 扩展 preset：`create-preset` / `update-preset` / `import-preset`
+- 调整路由策略：编辑运行配置中的 `routing`（taskTypeRules/capabilityKeywords/weights）
+- 接入上层系统：优先使用 `--json`，按 `docs/cli-schema.md` 解析
+
+## 公开仓 / 私有仓边界
+
+本仓仅包含公开实现与示例能力，不包含任何私有密钥、私有提示词资产、商业机密、私有工作流。
+
+## 贡献与质量门槛
+
+提交前建议至少执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zylzyqzz/WeiClaw/main/scripts/bootstrap/install.sh | bash
+pnpm tsgo
+pnpm exec vitest run test/agentos/*.test.ts
 ```
-
-#### Windows PowerShell
-
-```powershell
-iwr -useb https://raw.githubusercontent.com/zylzyqzz/WeiClaw/main/scripts/bootstrap/install.ps1 | iex
-```
-
-### 中国大陆安装
-
-由于 `raw.githubusercontent.com` 在中国大陆可能无法访问，请使用 jsDelivr CDN 作为脚本入口。
-
-#### macOS / Linux
-
-```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/zylzyqzz/WeiClaw@main/scripts/bootstrap/install.sh | bash
-```
-
-#### Windows PowerShell
-
-```powershell
-iwr -useb https://cdn.jsdelivr.net/gh/zylzyqzz/WeiClaw@main/scripts/bootstrap/install.ps1 | iex
-```
-
-### 安装后会发生什么
-
-1. 自动检测并安装 Git、Node.js（如未安装）
-2. 下载并安装 runtime 包
-3. 启动引导流程（Bootstrap）
-4. 根据终端环境自动决定是否打开 TUI
-
-## 引导安装流程
-
-首次安装后会进入引导流程，按提示完成配置：
-
-```
-WeiClaw
-Minimal private agent
-
-请选择接入方案 / Select plan
-1. Coding Plan         推荐 / Recommended
-2. 自定义 / Custom
-
-请选择云服务商 / Select provider
-1. 阿里云百炼
-2. 火山引擎
-3. 腾讯云
-4. 百度千帆
-5. 联通云
-
-连接地址 / Endpoint: https://coding.dashscope.aliyuncs.com/v1 (示例)
-
-请选择模型 / Select model
-1. qwen3.5-plus
-2. qwen3-coder-next
-...
-
-请输入 API Key...
-
-请选择通道 / Select channel
-1. Telegram
-2. Feishu
-
-请输入 Telegram Bot Token / Enter Telegram Bot Token
-```
-
-### Coding Plan 云服务商说明
-
-选择 Coding Plan 后，可选择以下云服务商：
-
-- **阿里云百炼**：默认推荐，预置 URL `https://coding.dashscope.aliyuncs.com/v1`
-- **火山引擎**：预置 URL `https://ark.cn-beijing.volces.com/api/coding/v3`
-- **腾讯云**：预置 URL `https://api.lkeap.cloud.tencent.com/coding/v3`
-- **百度千帆**：预置 URL `https://qianfan.baidubce.com/v2/coding`
-- **联通云**：预置 URL `https://aigw-gzgy2.cucloud.cn:8443/v1`
-- **自定义**：完全手动填写 URL、模型、API Key
-
-### 安装后行为
-
-- **交互式终端**：安装完成后自动进入引导流程
-- **非交互式终端**（如 SSH）：安装完成后显示下一步命令 `weiclaw setup --bootstrap`
-
-### TUI 自动打开行为
-
-- **适合自动打开 TUI 的环境**：本地交互终端
-- **不适合自动打开的环境**：SSH 远程、Termux 手机终端等，会显示提示信息
-
-### Linux 后台运行
-
-- **自动后台运行**：Linux 系统上，引导流程完成后自动安装 systemd user service
-- **关闭终端后服务继续运行**：通过 systemd linger 实现，关闭 SSH/终端后服务仍在后台运行
-- **服务状态**：可通过 `weiclaw status` 查看服务状态
-- **手动管理**：
-
-  ```bash
-  # 查看服务状态
-  systemctl --user status weiclaw
-
-  # 重启服务
-  systemctl --user restart weiclaw
-
-  # 停止服务
-  systemctl --user stop weiclaw
-  ```
-
-### 通道配置
-
-- **Telegram**：只需 Bot Token，最轻量
-  - **自动 webhook 清理**：使用 polling 模式时自动检测并清理残留 webhook，避免"服务活着但机器人不回话"
-- **Feishu/Lark**：需要 App ID + App Secret，引导流程中可选
-  - **自动处理已存在插件**：如果插件目录已存在，自动使用更新模式安装
-
-## 常用命令
-
-```bash
-# 启动 Gateway
-npm run start
-
-# 重新执行引导配置
-weiclaw setup --bootstrap
-
-# 打开终端界面
-weiclaw tui
-
-# 查看状态
-weiclaw status
-
-# 健康检查与修复
-weiclaw doctor
-
-# 高级配置
-weiclaw configure
-
-# 高级引导（完整功能）
-weiclaw onboard
-```
-
-`openclaw` 作为兼容别名保留，与 `weiclaw` 等效。
-
-## 升级方式
-
-### 重新安装（推荐）
-
-```bash
-# 国际网络
-curl -fsSL https://raw.githubusercontent.com/zylzyqzz/WeiClaw/main/scripts/bootstrap/install.sh | bash
-
-# 中国大陆
-curl -fsSL https://cdn.jsdelivr.net/gh/zylzyqzz/WeiClaw@main/scripts/bootstrap/install.sh | bash
-```
-
-安装器会自动处理升级。
-
-### 手动指定 runtime 包
-
-```bash
-WEICLAW_INSTALL_TARBALL="https://github.com/zylzyqzz/WeiClaw/releases/latest/download/weiclaw-runtime.tgz" bash -c "$(curl -fsSL https://cdn.jsdelivr.net/gh/zylzyqzz/WeiClaw@main/scripts/bootstrap/install.sh)"
-```
-
-## 故障排查
-
-### GitHub 下载慢 / 失败
-
-安装器内置自动回退：
-
-1. 官方 GitHub Release
-2. ghproxy.net 代理（适合中国大陆）
-3. 源码克隆（最终兜底）
-
-如遇网络问题，安装器会自动切换，无需手动操作。
-
-### 引导流程被取消怎么办
-
-```bash
-weiclaw setup --bootstrap
-```
-
-### 版本显示不对
-
-```bash
-weiclaw --version
-```
-
-如版本不对，可能是旧版残留，重新执行安装即可。
-
-### npm run start 报 package.json not found
-
-WeiClaw 默认通过全局安装的 runtime 包运行，不需要在项目目录下执行。
-
-如果需要在开发目录下运行：
-
-```bash
-npm run start
-```
-
-### 如何重新执行引导
-
-```bash
-weiclaw setup --bootstrap
-```
-
-## 当前限制
-
-- **jsDelivr**：仅作为脚本入口的备用源，不可直接镜像 runtime .tgz 包
-- **npm fallback**：尚未发布 `@weiclaw/runtime` 到 npm，暂不作为默认回退链
-- **国内分发**：依赖 GitHub Release + ghproxy.net 第三方公共服务
-
-## Roadmap
-
-- [ ] 发布 @weiclaw/runtime 到 npm（更稳定的回退源）
-- [ ] 更稳定的国内分发源
-- [ ] Feishu/Lark 通道完善
-- [ ] 更多模型接入
-
-## License / Attribution
-
-WeiClaw 基于 [OpenClaw](https://github.com/stealth/Claude-Code) 改造，保留上游开源协议与归属声明。
-
-保留文件：
-
-- `LICENSE`
-- `NOTICE.md`
-- 上游归属声明
