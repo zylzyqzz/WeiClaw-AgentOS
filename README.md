@@ -35,6 +35,43 @@
 - npm runtime 包发布闭环（当前依赖 GitHub Release + ghproxy.net 回退）
 - 更稳定的国内分发源
 
+## WeiClaw-AgentOS MVP（v2.1.0 alpha）
+
+当前能力已升级为“动态角色 + 长久记忆 + 可解释任务路由”。
+
+术语：
+
+- `RoleTemplate` = 角色模板
+- `RuntimeAgent` = 运行时实例
+- `Preset` = 预设组合
+- `AgentRegistry` = 角色注册中心
+
+默认 `commander/planner/builder/reviewer` 仅作为 demo preset，不是底层固定依赖。
+
+核心能力：
+
+- 动态角色模型（模板 + 运行时实例，支持版本/标签/策略/记忆范围）
+- 角色生命周期闭环（create/update/enable/disable/delete/export/import/validate）
+- 任务路由优先级：`--roles` > `--preset` > 动态能力路由
+- 路由结果可解释输出：`routeSummary` / `selectedRoles` / `selectionReasons`
+- 三层记忆（short-term / long-term / project-entity）
+- SQLite 优先 + 文件回退
+
+CLI 示例：
+
+```bash
+pnpm agentos -- list-roles
+pnpm agentos -- create-role --id qa --name QA --system-instruction "review quality" --capabilities qa,review
+pnpm agentos -- update-role --id qa --goals "prevent regressions" --version 1.0.1
+pnpm agentos -- validate-role --id qa
+pnpm agentos -- export-role --id qa --file /tmp/qa-role.json
+pnpm agentos -- import-role --file /tmp/qa-role.json --overwrite true
+pnpm agentos -- list-presets
+pnpm agentos -- inspect-preset --id default-demo
+pnpm agentos -- run --goal "实现本地多智能体 alpha" --roles commander,qa
+pnpm agentos -- run --goal "检查风险" --preset default-demo --required-capabilities review
+```
+
 ## 快速开始
 
 ### 国际网络安装
@@ -136,6 +173,7 @@ Minimal private agent
 - **关闭终端后服务继续运行**：通过 systemd linger 实现，关闭 SSH/终端后服务仍在后台运行
 - **服务状态**：可通过 `weiclaw status` 查看服务状态
 - **手动管理**：
+
   ```bash
   # 查看服务状态
   systemctl --user status weiclaw
@@ -261,6 +299,7 @@ weiclaw setup --bootstrap
 WeiClaw 基于 [OpenClaw](https://github.com/stealth/Claude-Code) 改造，保留上游开源协议与归属声明。
 
 保留文件：
+
 - `LICENSE`
 - `NOTICE.md`
 - 上游归属声明
