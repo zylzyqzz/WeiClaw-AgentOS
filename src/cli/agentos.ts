@@ -2,11 +2,7 @@
 import { stdin as input, stdout as output } from "node:process";
 import readline from "node:readline/promises";
 import {
-  configExists,
-  deletePreset,
-  freshConfig,
   readPresetBundleFile,
-  upsertPreset,
   writePresetBundleFile,
 } from "../agentos/config/store.js";
 import { inspectPreset, listPresets } from "../agentos/registry/preset-utils.js";
@@ -17,6 +13,7 @@ import type {
   AgentCapability,
   AgentMemoryScope,
   AgentPolicy,
+  CliEnvelope,
   LintResult,
   PresetDefinition,
   RoleBundle,
@@ -27,11 +24,7 @@ import type {
 const rawArgv = process.argv.slice(2).filter((arg, index) => !(index === 0 && arg === "--"));
 const jsonMode = rawArgv.includes("--json");
 const argv = rawArgv.filter((arg) => arg !== "--json");
-
-if (jsonMode) {
-  process.emitWarning = (() => undefined) as typeof process.emitWarning;
-  process.env.OPENCLAW_AGENTOS_DISABLE_SQLITE = "1";
-}
+const AGENTOS_CLI_VERSION = "2.1.0-alpha";
 
 class CliError extends Error {
   constructor(
@@ -42,6 +35,16 @@ class CliError extends Error {
   ) {
     super(message);
   }
+}
+
+interface EnvelopeInput<T> {
+  command: string;
+  result?: T;
+  routeSummary?: string;
+  selectedRoles?: string[];
+  selectionReasons?: string[];
+  lintFindings?: LintResult["findings"];
+  metadata?: Record<string, unknown>;
 }
 
 function getArg(name: string): string | undefined {
@@ -77,17 +80,35 @@ function parseIntSafe(name: string, fallback: number): number {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
-function emitSuccess(data: unknown, human?: () => void): void {
+function emitSuccess<T>(payload: EnvelopeInput<T>, human?: () => void): void {
   if (jsonMode) {
-    console.log(JSON.stringify({ ok: true, data }, null, 2));
+    const body: CliEnvelope<T> & {
+      routeSummary?: string;
+      selectedRoles?: string[];
+      selectionReasons?: string[];
+    } = {
+      ok: true,
+      command: payload.command,
+      version: AGENTOS_CLI_VERSION,
+      routeSummary: payload.routeSummary,
+      selectedRoles: payload.selectedRoles,
+      selectionReasons: payload.selectionReasons,
+      result: payload.result,
+      lintFindings: payload.lintFindings,
+      metadata: {
+        generatedAt: nowIso(),
+        ...payload.metadata,
+      },
+    };
+    console.log(JSON.stringify(body, null, 2));
     return;
   }
   if (human) {
     human();
-  } else if (typeof data === "string") {
-    console.log(data);
+  } else if (typeof payload.result === "string") {
+    console.log(payload.result);
   } else {
-    console.log(JSON.stringify(data, null, 2));
+    console.log(JSON.stringify(payload.result, null, 2));
   }
 }
 
@@ -244,7 +265,19 @@ async function runCommand() {
       preferredRoles: getCsv("preferred-roles"),
       excludedRoles: getCsv("excluded-roles"),
     });
-    emitSuccess(result, () => console.log(JSON.stringify(result, null, 2)));
+    emitSuccess(
+      {
+        command: "run",
+        routeSummary: result.routeSummary,
+        selectedRoles: result.selectedRoles,
+        selectionReasons: result.selectionReasons,
+        result,
+        metadata: {
+          consistencyIssues: runtime.consistencyIssues,
+        },
+      },
+      () => console.log(JSON.stringify(result, null, 2)),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -291,7 +324,14 @@ async function inspectMemoryCommand() {
     const rows = layer
       ? await runtime.memory.inspectByLayer(sessionId, layer, 50)
       : await runtime.memory.inspect(sessionId, 50);
-    emitSuccess(rows, () => console.log(JSON.stringify(rows, null, 2)));
+    emitSuccess(
+      {
+        command: "inspect-memory",
+        result: rows,
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(JSON.stringify(rows, null, 2)),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -314,7 +354,14 @@ async function listRolesCommand() {
         maxTurns: resolved?.effectivePolicy.maxTurns ?? 0,
       });
     }
-    emitSuccess(rows, () => console.table(rows));
+    emitSuccess(
+      {
+        command: "list-roles",
+        result: rows,
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.table(rows),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -331,7 +378,14 @@ async function inspectRoleCommand() {
     if (!role) {
       throw new CliError("NOT_FOUND", 3, `RuntimeAgent not found: ${roleId}`);
     }
-    emitSuccess(role, () => console.log(JSON.stringify(role, null, 2)));
+    emitSuccess(
+      {
+        command: "inspect-role",
+        result: role,
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(JSON.stringify(role, null, 2)),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -349,7 +403,14 @@ async function createRoleCommand() {
     const bundle: RoleBundle = { template, runtime: runtimeAgent };
     parseLintOrThrow(validateRoleBundle(bundle), "role");
     await runtime.registry.importRoleBundle(bundle, false);
-    emitSuccess({ id: roleId }, () => console.log(`Role created: ${roleId}`));
+    emitSuccess(
+      {
+        command: "create-role",
+        result: { id: roleId },
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Role created: ${roleId}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -425,7 +486,14 @@ async function updateRoleCommand() {
     }
 
     parseLintOrThrow(validateRoleBundle(await runtime.registry.exportRoleBundle(roleId)), "role");
-    emitSuccess({ id: roleId }, () => console.log(`Role updated: ${roleId}`));
+    emitSuccess(
+      {
+        command: "update-role",
+        result: { id: roleId },
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Role updated: ${roleId}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -441,7 +509,14 @@ async function deleteRoleCommand() {
     const bundle = await runtime.registry.exportRoleBundle(roleId);
     await runtime.registry.deleteRuntimeAgent(roleId, runtime.config.presets);
     await runtime.registry.deleteTemplate(bundle.template.id);
-    emitSuccess({ id: roleId }, () => console.log(`Role deleted: ${roleId}`));
+    emitSuccess(
+      {
+        command: "delete-role",
+        result: { id: roleId },
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Role deleted: ${roleId}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -455,7 +530,14 @@ async function disableRoleCommand() {
   const runtime = await createAgentOsRuntime();
   try {
     await runtime.registry.disableRuntimeAgent(roleId);
-    emitSuccess({ id: roleId, enabled: false }, () => console.log(`Role disabled: ${roleId}`));
+    emitSuccess(
+      {
+        command: "disable-role",
+        result: { id: roleId, enabled: false },
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Role disabled: ${roleId}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -469,7 +551,14 @@ async function enableRoleCommand() {
   const runtime = await createAgentOsRuntime();
   try {
     await runtime.registry.enableRuntimeAgent(roleId);
-    emitSuccess({ id: roleId, enabled: true }, () => console.log(`Role enabled: ${roleId}`));
+    emitSuccess(
+      {
+        command: "enable-role",
+        result: { id: roleId, enabled: true },
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Role enabled: ${roleId}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -485,7 +574,14 @@ async function exportRoleCommand() {
   try {
     const bundle = await runtime.registry.exportRoleBundle(roleId);
     await writeRoleBundleJson(file, bundle);
-    emitSuccess({ id: roleId, file }, () => console.log(`Role exported: ${roleId} -> ${file}`));
+    emitSuccess(
+      {
+        command: "export-role",
+        result: { id: roleId, file },
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Role exported: ${roleId} -> ${file}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -506,8 +602,13 @@ async function importRoleCommand() {
   const runtime = await createAgentOsRuntime();
   try {
     await runtime.registry.importRoleBundle(bundle, overwrite);
-    emitSuccess({ id: bundle.runtime.id }, () =>
-      console.log(`Role imported: ${bundle.runtime.id}`),
+    emitSuccess(
+      {
+        command: "import-role",
+        result: { id: bundle.runtime.id },
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Role imported: ${bundle.runtime.id}`),
     );
   } finally {
     await runtime.storage.close();
@@ -532,35 +633,45 @@ async function validateRoleCommand() {
   }
 
   const validation = validateRoleBundle(bundle);
-  emitSuccess(validation, () => console.log(JSON.stringify(validation, null, 2)));
+  emitSuccess(
+    {
+      command: "validate-role",
+      result: validation,
+      lintFindings: validation.findings,
+    },
+    () => console.log(JSON.stringify(validation, null, 2)),
+  );
   if (!validation.valid) {
     throw new CliError("VALIDATION_FAILED", 2, "role validation failed", validation);
   }
 }
 
 async function listPresetsCommand() {
-  let config = freshConfig();
-  if (configExists()) {
-    const runtime = await createAgentOsRuntime();
-    try {
-      config = runtime.config;
-    } finally {
-      await runtime.storage.close();
-    }
-  }
-  const presets = listPresets(config.presets);
-  emitSuccess(presets, () => {
-    console.table(
-      presets.map((preset) => ({
-        id: preset.id,
-        name: preset.name,
-        enabled: preset.enabled,
-        version: preset.version,
-        roles: preset.order.join(","),
-        taskTypes: preset.taskTypes.join(","),
-      })),
+  const runtime = await createAgentOsRuntime();
+  try {
+    const presets = listPresets(runtime.config.presets);
+    emitSuccess(
+      {
+        command: "list-presets",
+        result: presets,
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => {
+        console.table(
+          presets.map((preset) => ({
+            id: preset.id,
+            name: preset.name,
+            enabled: preset.enabled,
+            version: preset.version,
+            roles: preset.order.join(","),
+            taskTypes: preset.taskTypes.join(","),
+          })),
+        );
+      },
     );
-  });
+  } finally {
+    await runtime.storage.close();
+  }
 }
 
 async function inspectPresetCommand() {
@@ -568,20 +679,23 @@ async function inspectPresetCommand() {
   if (!id) {
     throw new CliError("BAD_REQUEST", 1, "Missing preset id. Use: inspect-preset --id <presetId>");
   }
-  let config = freshConfig();
-  if (configExists()) {
-    const runtime = await createAgentOsRuntime();
-    try {
-      config = runtime.config;
-    } finally {
-      await runtime.storage.close();
+  const runtime = await createAgentOsRuntime();
+  try {
+    const preset = inspectPreset(runtime.config.presets, id);
+    if (!preset) {
+      throw new CliError("NOT_FOUND", 3, `Preset not found: ${id}`);
     }
+    emitSuccess(
+      {
+        command: "inspect-preset",
+        result: preset,
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(JSON.stringify(preset, null, 2)),
+    );
+  } finally {
+    await runtime.storage.close();
   }
-  const preset = inspectPreset(config.presets, id);
-  if (!preset) {
-    throw new CliError("NOT_FOUND", 3, `Preset not found: ${id}`);
-  }
-  emitSuccess(preset, () => console.log(JSON.stringify(preset, null, 2)));
 }
 
 async function createPresetCommand() {
@@ -597,8 +711,16 @@ async function createPresetCommand() {
     const preset = buildPresetFromArgs(id);
     const lint = validatePreset(preset, await roleContextsFromRuntime(runtime));
     parseLintOrThrow(lint, "preset");
-    await upsertPreset(preset);
-    emitSuccess({ id }, () => console.log(`Preset created: ${id}`));
+    await runtime.repository.upsertPreset(preset);
+    emitSuccess(
+      {
+        command: "create-preset",
+        result: { id },
+        lintFindings: lint.findings,
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Preset created: ${id}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -618,8 +740,16 @@ async function updatePresetCommand() {
     const preset = buildPresetFromArgs(id, previous);
     const lint = validatePreset(preset, await roleContextsFromRuntime(runtime));
     parseLintOrThrow(lint, "preset");
-    await upsertPreset(preset);
-    emitSuccess({ id }, () => console.log(`Preset updated: ${id}`));
+    await runtime.repository.upsertPreset(preset);
+    emitSuccess(
+      {
+        command: "update-preset",
+        result: { id },
+        lintFindings: lint.findings,
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Preset updated: ${id}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -630,8 +760,20 @@ async function deletePresetCommand() {
   if (!id) {
     throw new CliError("BAD_REQUEST", 1, "Missing preset id. Use: delete-preset --id <presetId>");
   }
-  await deletePreset(id);
-  emitSuccess({ id }, () => console.log(`Preset deleted: ${id}`));
+  const runtime = await createAgentOsRuntime();
+  try {
+    await runtime.repository.deletePreset(id, runtime.config.defaultPreset);
+    emitSuccess(
+      {
+        command: "delete-preset",
+        result: { id },
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Preset deleted: ${id}`),
+    );
+  } finally {
+    await runtime.storage.close();
+  }
 }
 
 async function exportPresetCommand() {
@@ -640,21 +782,24 @@ async function exportPresetCommand() {
   if (!id || !file) {
     throw new CliError("BAD_REQUEST", 1, "Usage: export-preset --id <presetId> --file <path.json>");
   }
-  let config = freshConfig();
-  if (configExists()) {
-    const runtime = await createAgentOsRuntime();
-    try {
-      config = runtime.config;
-    } finally {
-      await runtime.storage.close();
+  const runtime = await createAgentOsRuntime();
+  try {
+    const preset = runtime.config.presets[id];
+    if (!preset) {
+      throw new CliError("NOT_FOUND", 3, `Preset not found: ${id}`);
     }
+    await writePresetBundleFile(file, preset);
+    emitSuccess(
+      {
+        command: "export-preset",
+        result: { id, file },
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Preset exported: ${id} -> ${file}`),
+    );
+  } finally {
+    await runtime.storage.close();
   }
-  const preset = config.presets[id];
-  if (!preset) {
-    throw new CliError("NOT_FOUND", 3, `Preset not found: ${id}`);
-  }
-  await writePresetBundleFile(file, preset);
-  emitSuccess({ id, file }, () => console.log(`Preset exported: ${id} -> ${file}`));
 }
 
 async function importPresetCommand() {
@@ -675,8 +820,16 @@ async function importPresetCommand() {
     }
     const lint = validatePreset(preset, await roleContextsFromRuntime(runtime));
     parseLintOrThrow(lint, "preset");
-    await upsertPreset(preset);
-    emitSuccess({ id: preset.id }, () => console.log(`Preset imported: ${preset.id}`));
+    await runtime.repository.upsertPreset(preset);
+    emitSuccess(
+      {
+        command: "import-preset",
+        result: { id: preset.id },
+        lintFindings: lint.findings,
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(`Preset imported: ${preset.id}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -705,7 +858,15 @@ async function validatePresetCommand() {
     }
 
     const lint = validatePreset(preset, await roleContextsFromRuntime(runtime));
-    emitSuccess(lint, () => console.log(JSON.stringify(lint, null, 2)));
+    emitSuccess(
+      {
+        command: "validate-preset",
+        result: lint,
+        lintFindings: lint.findings,
+        metadata: { consistencyIssues: runtime.consistencyIssues },
+      },
+      () => console.log(JSON.stringify(lint, null, 2)),
+    );
     if (!lint.valid) {
       throw new CliError("VALIDATION_FAILED", 2, "preset validation failed", lint);
     }
@@ -824,24 +985,37 @@ async function main() {
 }
 
 main().catch((err) => {
+  const command = argv[0] ?? "unknown";
   const cliErr =
     err instanceof CliError
       ? err
       : new CliError("UNEXPECTED_ERROR", 1, err instanceof Error ? err.message : String(err));
   if (jsonMode) {
+    const payload: CliEnvelope<never> & {
+      routeSummary?: string;
+      selectedRoles?: string[];
+      selectionReasons?: string[];
+    } = {
+      ok: false,
+      command,
+      version: AGENTOS_CLI_VERSION,
+      routeSummary: undefined,
+      selectedRoles: undefined,
+      selectionReasons: undefined,
+      result: undefined,
+      lintFindings: undefined,
+      metadata: {
+        generatedAt: nowIso(),
+        exitCode: cliErr.exitCode,
+      },
+      error: {
+        code: cliErr.code,
+        message: cliErr.message,
+        details: cliErr.details,
+      },
+    };
     console.error(
-      JSON.stringify(
-        {
-          ok: false,
-          error: {
-            code: cliErr.code,
-            message: cliErr.message,
-            details: cliErr.details,
-          },
-        },
-        null,
-        2,
-      ),
+      JSON.stringify(payload, null, 2),
     );
   } else {
     console.error(`[agentos] ${cliErr.code}: ${cliErr.message}`);

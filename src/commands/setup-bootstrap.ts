@@ -5,6 +5,7 @@ import path from "node:path";
 import { formatCliCommand } from "../cli/command-format.js";
 import { formatWeiClawInstallerLogo } from "../cli/banner.js";
 import { createConfigIO, type OpenClawConfig, writeConfigFile } from "../config/config.js";
+import type { ModelApi } from "../config/types.models.js";
 import { formatConfigPath } from "../config/logging.js";
 import { resolveSessionTranscriptsDir } from "../config/sessions.js";
 import { resolveOpenClawPackageRoot } from "../infra/openclaw-root.js";
@@ -50,7 +51,7 @@ export interface CodingPlanProviderMeta {
   providerKey: string;
   displayName: string;
   baseUrl: string;
-  api: string;
+  api: ModelApi;
   defaultModel: string;
   models: Array<{ id: string; name: string }>;
 }
@@ -232,33 +233,6 @@ const PROVIDER_OPTIONS: Array<{
   },
 ];
 
-const MODEL_OPTIONS: Array<{
-  value: BootstrapModelChoice;
-  label: string;
-  hint: string;
-}> = [
-  {
-    value: "qianfan",
-    label: "qianfan/deepseek-v3.2",
-    hint: "推荐 / Recommended",
-  },
-  {
-    value: "kimi-coding",
-    label: "kimi-coding/k2p5",
-    hint: "代码 / Coding",
-  },
-  {
-    value: "moonshot",
-    label: "moonshot/kimi-k2.5",
-    hint: "推理 / Reasoning",
-  },
-  {
-    value: "custom",
-    label: "Custom",
-    hint: "自定义 / Advanced",
-  },
-];
-
 const CHANNEL_OPTIONS: Array<{
   value: BootstrapChannelChoice;
   label: string;
@@ -336,7 +310,7 @@ async function promptModelApiKey(params: {
 
 async function applyModelPreset(params: {
   cfg: OpenClawConfig;
-  model: BootstrapProviderChoice;
+  provider: BootstrapProviderChoice;
   prompter: WizardPrompter;
 }): Promise<OpenClawConfig> {
   const { cfg, provider, prompter } = params;
@@ -733,7 +707,7 @@ export async function runSetupBootstrap(
     let nextConfig: OpenClawConfig = applyBootstrapBaseConfig({}, workspace, gatewayToken);
     nextConfig = await applyModelPreset({
       cfg: nextConfig,
-      model: modelChoice,
+      provider: modelChoice,
       prompter,
     });
 
@@ -902,4 +876,3 @@ export async function runSetupBootstrap(
     throw error;
   }
 }
-

@@ -52,13 +52,20 @@
 
 - 动态角色模型（模板 + 运行时实例，支持版本/标签/策略/记忆范围）
 - 角色生命周期闭环（create/update/enable/disable/delete/export/import/validate）
+- 单一来源持久化（role/preset/runtime config 统一写入 storage；`.weiclaw-agentos.json` 已 deprecated，仅用于兼容迁移）
 - 任务路由优先级：`--roles` > `--preset` > 动态能力路由
+- 动态路由配置化（`taskTypeRules` + `capabilityKeywords` + `weights`）
 - 路由结果可解释输出：`routeSummary` / `selectedRoles` / `selectionReasons`
 - preset 生命周期闭环（create/update/delete/export/import/validate）
 - 语义 lint（policy/capability/memoryScope/preset 引用与顺序冲突）
 - 机器可读输出（`--json` + 统一错误结构 + 稳定 exit code）
 - 三层记忆（short-term / long-term / project-entity）
 - SQLite 优先 + 文件回退
+
+契约文档：
+
+- CLI JSON schema: `docs/cli-schema.md`
+- 架构权威文档: `docs/architecture.md`
 
 CLI 示例：
 

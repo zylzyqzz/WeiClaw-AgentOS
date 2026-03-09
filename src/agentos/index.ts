@@ -9,6 +9,7 @@ export * from "./registry/agent-registry.js";
 export * from "./registry/role-validation.js";
 export * from "./registry/role-io.js";
 export * from "./registry/preset-utils.js";
+export * from "./repository/agentos-repository.js";
 export * from "./session/session-store.js";
 export * from "./memory/memory-manager.js";
 export * from "./orchestrator/orchestrator.js";

@@ -1,4 +1,4 @@
-import type { PresetDefinition, RoleTemplate, RuntimeAgent } from "../types.js";
+import type { AgentMemoryScope, PresetDefinition, RoleTemplate, RuntimeAgent } from "../types.js";
 
 const nowIso = () => new Date().toISOString();
 
@@ -12,9 +12,9 @@ function basePolicy() {
   };
 }
 
-function baseMemoryScope() {
+function baseMemoryScope(): AgentMemoryScope {
   return {
-    layers: ["short-term", "long-term", "project-entity"] as const,
+    layers: ["short-term", "long-term", "project-entity"],
     scopes: ["session:*", "entity:*"],
     crossSessionRead: false,
   };

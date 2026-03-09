@@ -26,6 +26,18 @@ WeiClaw-AgentOS alpha is a **dynamic-role + durable-memory** local-first runtime
 
 CLI entry: `src/cli/agentos.ts`
 
+Persistence source of truth:
+
+- `RoleTemplate` / `RuntimeAgent` / `Preset` / runtime config are persisted in `AgentOsStorage` (SQLite first, file fallback).
+- `.weiclaw-agentos.json` is deprecated and treated as legacy compatibility input only (migration source), not active runtime source.
+- Startup flow:
+1. load base defaults from `config/loader.ts`
+2. run one-time legacy migration into storage (`AgentOsRepository`)
+3. merge runtime config patch + persisted presets
+4. run consistency checks (`defaultPreset`, preset-role references, preset order mismatch)
+- If legacy data is detected at startup, CLI logs a migration warning and completion/failure status.
+- Consistency findings carry `level/code/message/fixHint` and are surfaced in CLI JSON `metadata.consistencyIssues`.
+
 ## Routing order
 
 Task routing order is strict:
@@ -33,6 +45,19 @@ Task routing order is strict:
 1. explicit roles (`run --roles`)
 2. preset (`run --preset`)
 3. dynamic capability route (`taskType/constraints/requiredCapabilities/preferredRoles/excludedRoles`)
+
+Dynamic route is configuration-driven via `OrchestratorConfig.routing`:
+
+- `taskTypeRules`: `taskType -> requiredCapabilities/preferredRoles/excludedRoles`
+- `capabilityKeywords`: keyword-to-capability scoring map
+- `weights`: `requiredCapability`, `preferredRole`, `keywordMatch`, `coordinationConstraint`
+- `maxDynamicRoles`: top-N role selection cap
+
+Decision explanation is emitted via:
+
+- `routeSummary`
+- `selectedRoles`
+- `selectionReasons`
 
 Result contract includes:
 
@@ -75,7 +100,7 @@ Compatibility alias:
 Machine-readable mode:
 
 - `--json` on core commands (`run`, `validate-role`, `validate-preset`, `inspect-role`, `inspect-preset`, `list-roles`, `list-presets`)
-- unified error object: `{ ok: false, error: { code, message, details } }`
+- unified envelope + error object documented in `docs/cli-schema.md`
 - stable exit codes (`0` success, `2` validation failed, `3` not found/conflict, `1` generic)
 
 Semantic lint output:

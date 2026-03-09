@@ -54,6 +54,7 @@ describe("orchestrator route selection", () => {
       });
       expect(result.routeSummary).toContain("preset route");
       expect(result.selectedRoles.length).toBeGreaterThan(0);
+      expect(result.selectionReasons.join(" ")).toContain("priority: preset");
     } finally {
       await env.storage.close();
       await rm(env.root, { recursive: true, force: true });
@@ -75,7 +76,48 @@ describe("orchestrator route selection", () => {
       expect(result.routeSummary).toContain("dynamic capability route");
       expect(result.selectedRoles).not.toContain("builder");
       expect(result.selectedRoles).toContain("reviewer");
+      expect(result.selectedRoles).toContain("planner");
       expect(result.selectionReasons.length).toBeGreaterThan(0);
+      expect(result.selectionReasons.join(" ")).toContain("priority: dynamic route");
+    } finally {
+      await env.storage.close();
+      await rm(env.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps explicit roles as highest priority over preset", async () => {
+    const env = await setup();
+    try {
+      const result = await env.orchestrator.run({
+        sessionId: "s-priority",
+        goal: "override preset",
+        roles: ["reviewer"],
+        preset: "default-demo",
+      });
+      expect(result.routeSummary).toContain("explicit");
+      expect(result.selectedRoles).toEqual(["reviewer"]);
+    } finally {
+      await env.storage.close();
+      await rm(env.root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses taskType routing rule from config and reports reason", async () => {
+    const env = await setup();
+    try {
+      env.cfg.routing.taskTypeRules["ops-hotfix"] = {
+        requiredCapabilities: ["ops"],
+        preferredRoles: ["builder"],
+      };
+      const result = await env.orchestrator.run({
+        sessionId: "s-config",
+        goal: "hotfix deployment pipeline",
+        taskType: "ops-hotfix",
+        preset: "",
+      });
+      expect(result.routeSummary).toContain("dynamic");
+      expect(result.selectedRoles).toContain("builder");
+      expect(result.selectionReasons.join(" ")).toContain("taskType rule applied: ops-hotfix");
     } finally {
       await env.storage.close();
       await rm(env.root, { recursive: true, force: true });

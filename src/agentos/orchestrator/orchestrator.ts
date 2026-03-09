@@ -4,13 +4,7 @@ import { AgentRegistry, type ResolvedRuntimeAgent } from "../registry/agent-regi
 import { ensurePresetExists } from "../registry/preset-utils.js";
 import { validatePreset } from "../registry/role-validation.js";
 import { SessionStore } from "../session/session-store.js";
-import type {
-  AgentCapability,
-  OrchestratorConfig,
-  PresetDefinition,
-  TaskRequest,
-  TaskResult,
-} from "../types.js";
+import type { AgentCapability, OrchestratorConfig, PresetDefinition, TaskRequest, TaskResult } from "../types.js";
 
 interface RouteDecision {
   routeSummary: string;
@@ -22,68 +16,92 @@ function uniq(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
-function includesAny<T extends string>(target: T[], wanted: T[]): boolean {
-  return wanted.some((x) => target.includes(x));
+function missingRequiredCapabilities(
+  selected: ResolvedRuntimeAgent[],
+  required: AgentCapability[],
+): AgentCapability[] {
+  const covered = new Set(selected.flatMap((agent) => agent.effectiveCapabilities as string[]));
+  return required.filter((cap) => !covered.has(cap));
+}
+
+function getPreset(config: OrchestratorConfig, presetId: string): PresetDefinition {
+  return ensurePresetExists(config.presets, presetId);
+}
+
+function mergeRouteInputs(config: OrchestratorConfig, request: TaskRequest): {
+  required: AgentCapability[];
+  preferred: string[];
+  excluded: string[];
+  reasons: string[];
+} {
+  const reasons: string[] = [];
+  const taskType = (request.taskType ?? "").trim();
+  const rule = taskType ? config.routing.taskTypeRules[taskType] : undefined;
+
+  const required = uniq([
+    ...(rule?.requiredCapabilities ?? []),
+    ...(request.requiredCapabilities ?? []),
+  ]) as AgentCapability[];
+
+  const preferred = uniq([...(rule?.preferredRoles ?? []), ...(request.preferredRoles ?? [])]);
+  const excluded = uniq([...(rule?.excludedRoles ?? []), ...(request.excludedRoles ?? [])]);
+
+  if (taskType && rule) {
+    reasons.push(`taskType rule applied: ${taskType}`);
+  }
+  if (required.length > 0) {reasons.push(`requiredCapabilities: ${required.join(", ")}`);}
+  if (preferred.length > 0) {reasons.push(`preferredRoles: ${preferred.join(", ")}`);}
+  if (excluded.length > 0) {reasons.push(`excludedRoles: ${excluded.join(", ")}`);}
+
+  return { required, preferred, excluded, reasons };
 }
 
 function scoreAgent(
+  config: OrchestratorConfig,
   agent: ResolvedRuntimeAgent,
   request: TaskRequest,
+  merged: ReturnType<typeof mergeRouteInputs>,
 ): { score: number; reasons: string[] } {
   const reasons: string[] = [];
   let score = 0;
 
   const caps = agent.effectiveCapabilities;
-  const required = request.requiredCapabilities ?? [];
 
-  if (required.length > 0) {
-    if (required.every((cap) => caps.includes(cap))) {
-      score += 6;
-      reasons.push(`matches requiredCapabilities: ${required.join(",")}`);
+  if (merged.required.length > 0) {
+    const matched = merged.required.filter((cap) => caps.includes(cap));
+    if (matched.length > 0) {
+      score += matched.length * config.routing.weights.requiredCapability;
+      reasons.push(`matched requiredCapabilities: ${matched.join(",")}`);
     } else {
-      reasons.push(`missing requiredCapabilities`);
-      return { score: -1000, reasons };
+      reasons.push("no requiredCapabilities matched");
     }
   }
 
-  if ((request.preferredRoles ?? []).includes(agent.runtime.id)) {
-    score += 3;
+  if (merged.preferred.includes(agent.runtime.id)) {
+    score += config.routing.weights.preferredRole;
     reasons.push("in preferredRoles");
   }
 
-  if ((request.excludedRoles ?? []).includes(agent.runtime.id)) {
+  if (merged.excluded.includes(agent.runtime.id)) {
     reasons.push("in excludedRoles");
     return { score: -1000, reasons };
   }
 
   const text = `${request.goal} ${request.taskType ?? ""}`.toLowerCase();
-  const keywordMap: Array<{ words: string[]; caps: AgentCapability[]; label: string }> = [
-    { words: ["plan", "strategy"], caps: ["planning"], label: "planning keywords" },
-    { words: ["build", "implement", "code"], caps: ["build"], label: "build keywords" },
-    { words: ["review", "risk"], caps: ["review"], label: "review keywords" },
-    { words: ["test", "quality"], caps: ["qa"], label: "qa keywords" },
-    { words: ["deploy", "ops"], caps: ["ops"], label: "ops keywords" },
-    { words: ["research", "investigate"], caps: ["research"], label: "research keywords" },
-  ];
-
-  for (const rule of keywordMap) {
-    if (rule.words.some((w) => text.includes(w)) && includesAny(caps, rule.caps)) {
-      score += 2;
-      reasons.push(`matched ${rule.label}`);
+  for (const [capability, words] of Object.entries(config.routing.capabilityKeywords)) {
+    if (words.some((w) => text.includes(w.toLowerCase())) && caps.includes(capability as AgentCapability)) {
+      score += config.routing.weights.keywordMatch;
+      reasons.push(`matched capability keywords: ${capability}`);
     }
   }
 
   const constraints = request.constraints ?? [];
   if (constraints.length > 0 && caps.includes("coordination")) {
-    score += 1;
+    score += config.routing.weights.coordinationConstraint;
     reasons.push("coordination for constraints");
   }
 
   return { score, reasons: reasons.length > 0 ? reasons : ["fallback score"] };
-}
-
-function getPreset(config: OrchestratorConfig, presetId: string): PresetDefinition {
-  return ensurePresetExists(config.presets, presetId);
 }
 
 export class Orchestrator {
@@ -156,6 +174,7 @@ export class Orchestrator {
         routeSummary: "explicit roles route",
         selected,
         reasons: [
+          `priority: explicit roles (highest)` ,
           `explicit roles requested: ${explicitRoles.join(", ")}`,
           `resolved roles: ${selected.map((x) => x.runtime.id).join(", ") || "none"}`,
         ],
@@ -166,7 +185,7 @@ export class Orchestrator {
     const presetId = request.preset ?? this.config.defaultPreset;
     if (shouldUsePreset && presetId) {
       const preset = getPreset(this.config, presetId);
-      const roleIds = uniq(preset.order.length > 0 ? preset.order : preset.roles).filter(
+      const roleIds = uniq((preset.order.length > 0 ? preset.order : preset.roles)).filter(
         (id) => !(request.excludedRoles ?? []).includes(id),
       );
       const roleContexts = [] as Array<{
@@ -184,9 +203,7 @@ export class Orchestrator {
       }>;
       for (const agentId of roleIds) {
         const inspected = await this.registry.inspectRuntimeAgent(agentId);
-        if (!inspected) {
-          continue;
-        }
+        if (!inspected) {continue;}
         roleContexts.push({
           id: inspected.runtime.id,
           enabled: inspected.runtime.enabled && inspected.template.enabled,
@@ -207,6 +224,7 @@ export class Orchestrator {
           routeSummary: `preset route (${preset.id})`,
           selected,
           reasons: [
+            `priority: preset (second)` ,
             `preset selected: ${preset.id}`,
             `preset defaultPolicy.maxTurns: ${preset.defaultPolicy.maxTurns}`,
             `preset roles resolved: ${selected.map((x) => x.runtime.id).join(", ")}`,
@@ -215,19 +233,15 @@ export class Orchestrator {
       }
     }
 
+    const merged = mergeRouteInputs(this.config, request);
     const all = await this.registry.listRuntimeAgents();
     const scored: Array<{ resolved: ResolvedRuntimeAgent; score: number; reasons: string[] }> = [];
     for (const role of all) {
       const resolved = await this.registry.inspectRuntimeAgent(role.id);
-      if (
-        !resolved ||
-        !resolved.runtime.enabled ||
-        !resolved.template.enabled ||
-        !resolved.effectivePolicy.enabled
-      ) {
+      if (!resolved || !resolved.runtime.enabled || !resolved.template.enabled || !resolved.effectivePolicy.enabled) {
         continue;
       }
-      const evaluated = scoreAgent(resolved, request);
+      const evaluated = scoreAgent(this.config, resolved, request, merged);
       if (evaluated.score > -1000) {
         scored.push({ resolved, score: evaluated.score, reasons: evaluated.reasons });
       }
@@ -235,14 +249,33 @@ export class Orchestrator {
 
     const selected = scored
       .toSorted((a, b) => b.score - a.score)
-      .slice(0, 4)
+      .slice(0, this.config.routing.maxDynamicRoles)
       .filter((x) => x.score > 0)
       .map((x) => x.resolved);
 
-    const reasons = scored
-      .toSorted((a, b) => b.score - a.score)
-      .slice(0, 4)
-      .map((x) => `${x.resolved.runtime.id}: score=${x.score}; ${x.reasons.join("; ")}`);
+    if (merged.required.length > 0) {
+      const missing = missingRequiredCapabilities(selected, merged.required);
+      if (missing.length > 0) {
+        return {
+          routeSummary: "dynamic capability route",
+          selected: [],
+          reasons: [
+            "priority: dynamic route (fallback)",
+            ...merged.reasons,
+            `missing requiredCapabilities coverage: ${missing.join(", ")}`,
+          ],
+        };
+      }
+    }
+
+    const reasons = [
+      "priority: dynamic route (fallback)",
+      ...merged.reasons,
+      ...scored
+        .toSorted((a, b) => b.score - a.score)
+        .slice(0, this.config.routing.maxDynamicRoles)
+        .map((x) => `${x.resolved.runtime.id}: score=${x.score}; ${x.reasons.join("; ")}`),
+    ];
 
     return {
       routeSummary: "dynamic capability route",

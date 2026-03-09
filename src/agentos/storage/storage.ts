@@ -1,6 +1,8 @@
 import type {
   MemoryQuery,
   MemoryRecord,
+  OrchestratorConfig,
+  PresetDefinition,
   RoleTemplate,
   RuntimeAgent,
   SessionState,
@@ -27,4 +29,14 @@ export interface AgentOsStorage {
   getRuntimeAgent(agentId: string): Promise<RuntimeAgent | null>;
   listRuntimeAgents(): Promise<RuntimeAgent[]>;
   deleteRuntimeAgent(agentId: string): Promise<void>;
+
+  upsertPreset(preset: PresetDefinition): Promise<void>;
+  getPreset(presetId: string): Promise<PresetDefinition | null>;
+  listPresets(): Promise<PresetDefinition[]>;
+  deletePreset(presetId: string): Promise<void>;
+
+  getRuntimeConfig(): Promise<Partial<OrchestratorConfig> | null>;
+  setRuntimeConfig(config: Partial<OrchestratorConfig>): Promise<void>;
+  getMeta(key: string): Promise<string | null>;
+  setMeta(key: string, value: string): Promise<void>;
 }

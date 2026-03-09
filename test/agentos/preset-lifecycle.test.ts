@@ -1,19 +1,13 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { defaultOrchestratorConfig } from "../../src/agentos/config/loader.js";
-import {
-  deletePreset,
-  readPresetBundleFile,
-  upsertPreset,
-  writePresetBundleFile,
-} from "../../src/agentos/config/store.js";
+import { readPresetBundleFile, writePresetBundleFile } from "../../src/agentos/config/store.js";
+import { createAgentOsRuntime } from "../../src/agentos/runtime/create-runtime.js";
 
 describe("preset lifecycle", () => {
   it("creates, updates, exports, imports, and deletes preset", async () => {
     const root = await mkdtemp(join(tmpdir(), "agentos-preset-life-"));
-    const config = defaultOrchestratorConfig(root);
     const preset = {
       id: "qa-only",
       name: "QA Only",
@@ -36,25 +30,28 @@ describe("preset lifecycle", () => {
     };
 
     try {
-      await upsertPreset(preset, root);
+      const runtime = await createAgentOsRuntime(root);
+      await runtime.repository.upsertPreset(preset);
       const file = join(root, "qa-only.json");
       await writePresetBundleFile(file, preset);
       const imported = await readPresetBundleFile(file);
       expect(imported.id).toBe("qa-only");
 
-      await upsertPreset(
-        { ...imported, version: "1.0.1", updatedAt: new Date().toISOString() },
-        root,
-      );
-      const raw = await readFile(join(root, ".weiclaw-agentos.json"), "utf8");
-      expect(raw).toContain("qa-only");
-      expect(raw).toContain("1.0.1");
+      await runtime.repository.upsertPreset({
+        ...imported,
+        version: "1.0.1",
+        updatedAt: new Date().toISOString(),
+      });
+      const updated = await runtime.repository.getPreset("qa-only");
+      expect(updated?.version).toBe("1.0.1");
 
-      await deletePreset("qa-only", root);
-      const afterDelete = await readFile(join(root, ".weiclaw-agentos.json"), "utf8");
-      expect(afterDelete).not.toContain('"qa-only"');
+      await runtime.repository.deletePreset("qa-only", runtime.config.defaultPreset);
+      expect(await runtime.repository.getPreset("qa-only")).toBeNull();
 
-      await expect(deletePreset(config.defaultPreset, root)).rejects.toThrow("defaultPreset");
+      await expect(
+        runtime.repository.deletePreset(runtime.config.defaultPreset, runtime.config.defaultPreset),
+      ).rejects.toThrow("defaultPreset");
+      await runtime.storage.close();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

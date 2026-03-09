@@ -26,6 +26,26 @@ export interface AgentMemoryScope {
   crossSessionRead: boolean;
 }
 
+export interface RoutingTaskTypeRule {
+  requiredCapabilities?: AgentCapability[];
+  preferredRoles?: string[];
+  excludedRoles?: string[];
+}
+
+export interface RoutingWeights {
+  requiredCapability: number;
+  preferredRole: number;
+  keywordMatch: number;
+  coordinationConstraint: number;
+}
+
+export interface RoutingConfig {
+  taskTypeRules: Record<string, RoutingTaskTypeRule>;
+  capabilityKeywords: Record<string, string[]>;
+  weights: RoutingWeights;
+  maxDynamicRoles: number;
+}
+
 export interface RoleTemplate {
   id: string;
   name: string;
@@ -133,6 +153,7 @@ export interface OrchestratorConfig {
   presets: Record<string, PresetDefinition>;
   roleTemplates?: RoleTemplate[];
   runtimeAgents?: RuntimeAgent[];
+  routing: RoutingConfig;
 }
 
 export interface MemoryQuery {
@@ -157,4 +178,25 @@ export interface LintResult {
 export interface RoleBundle {
   template: RoleTemplate;
   runtime: RuntimeAgent;
+}
+
+export interface ConsistencyIssue {
+  level: "error" | "warning";
+  code: string;
+  message: string;
+  fixHint?: string;
+}
+
+export interface CliEnvelope<T> {
+  ok: boolean;
+  command: string;
+  version: string;
+  metadata: Record<string, unknown>;
+  result?: T;
+  lintFindings?: LintFinding[];
+  error?: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
 }

@@ -23,15 +23,34 @@ describe("cli json output and exit codes", () => {
       expect(listRoles.status).toBe(0);
       const listObj = JSON.parse(listRoles.stdout);
       expect(listObj.ok).toBe(true);
+      expect(listObj.command).toBe("list-roles");
+      expect(typeof listObj.version).toBe("string");
+      expect(listObj.metadata).toBeTypeOf("object");
+      expect(listObj.result).toBeInstanceOf(Array);
 
       const listPresets = runCli(root, ["list-presets", "--json"]);
       expect(listPresets.status).toBe(0);
       const presetObj = JSON.parse(listPresets.stdout);
       expect(presetObj.ok).toBe(true);
+      expect(presetObj.command).toBe("list-presets");
+      expect(presetObj.result).toBeInstanceOf(Array);
 
       const inspectPreset = runCli(root, ["inspect-preset", "--id", "default-demo", "--json"]);
       expect(inspectPreset.status).toBe(0);
-      expect(JSON.parse(inspectPreset.stdout).ok).toBe(true);
+      const inspectObj = JSON.parse(inspectPreset.stdout);
+      expect(inspectObj.ok).toBe(true);
+      expect(inspectObj.command).toBe("inspect-preset");
+      expect(inspectObj.result.id).toBe("default-demo");
+
+      const run = runCli(root, ["run", "--goal", "plan and build alpha", "--json"]);
+      expect(run.status).toBe(0);
+      const runObj = JSON.parse(run.stdout);
+      expect(runObj.ok).toBe(true);
+      expect(runObj.command).toBe("run");
+      expect(typeof runObj.routeSummary).toBe("string");
+      expect(runObj.selectedRoles).toBeInstanceOf(Array);
+      expect(runObj.selectionReasons).toBeInstanceOf(Array);
+      expect(runObj.result.routeSummary).toBe(runObj.routeSummary);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -44,6 +63,9 @@ describe("cli json output and exit codes", () => {
       expect(bad.status).toBe(3);
       const errObj = JSON.parse(bad.stderr);
       expect(errObj.ok).toBe(false);
+      expect(errObj.command).toBe("inspect-preset");
+      expect(typeof errObj.version).toBe("string");
+      expect(errObj.metadata.exitCode).toBe(3);
       expect(errObj.error.code).toBe("NOT_FOUND");
 
       const invalidPresetPath = path.join(root, "invalid-preset.json");
@@ -73,6 +95,8 @@ describe("cli json output and exit codes", () => {
       const validate = runCli(root, ["validate-preset", "--file", invalidPresetPath, "--json"]);
       expect(validate.status).toBe(2);
       const validateErr = JSON.parse(validate.stderr);
+      expect(validateErr.ok).toBe(false);
+      expect(validateErr.command).toBe("validate-preset");
       expect(validateErr.error.code).toBe("VALIDATION_FAILED");
     } finally {
       await rm(root, { recursive: true, force: true });
