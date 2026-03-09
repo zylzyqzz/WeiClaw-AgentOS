@@ -1,20 +1,48 @@
 #!/usr/bin/env node
 import { stdin as input, stdout as output } from "node:process";
 import readline from "node:readline/promises";
+import {
+  configExists,
+  deletePreset,
+  freshConfig,
+  readPresetBundleFile,
+  upsertPreset,
+  writePresetBundleFile,
+} from "../agentos/config/store.js";
 import { inspectPreset, listPresets } from "../agentos/registry/preset-utils.js";
 import { readRoleBundleJson, writeRoleBundleJson } from "../agentos/registry/role-io.js";
-import { validateRoleBundle } from "../agentos/registry/role-validation.js";
+import { validatePreset, validateRoleBundle } from "../agentos/registry/role-validation.js";
 import { createAgentOsRuntime } from "../agentos/runtime/create-runtime.js";
 import type {
   AgentCapability,
-  AgentPolicy,
   AgentMemoryScope,
+  AgentPolicy,
+  LintResult,
+  PresetDefinition,
   RoleBundle,
   RoleTemplate,
   RuntimeAgent,
 } from "../agentos/types.js";
 
-const argv = process.argv.slice(2).filter((arg, index) => !(index === 0 && arg === "--"));
+const rawArgv = process.argv.slice(2).filter((arg, index) => !(index === 0 && arg === "--"));
+const jsonMode = rawArgv.includes("--json");
+const argv = rawArgv.filter((arg) => arg !== "--json");
+
+if (jsonMode) {
+  process.emitWarning = (() => undefined) as typeof process.emitWarning;
+  process.env.OPENCLAW_AGENTOS_DISABLE_SQLITE = "1";
+}
+
+class CliError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly exitCode: number,
+    message: string,
+    public readonly details?: unknown,
+  ) {
+    super(message);
+  }
+}
 
 function getArg(name: string): string | undefined {
   const index = argv.findIndex((arg) => arg === `--${name}`);
@@ -47,6 +75,54 @@ function parseBool(name: string, fallback: boolean): boolean {
 function parseIntSafe(name: string, fallback: number): number {
   const n = Number(getArg(name) ?? String(fallback));
   return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+function emitSuccess(data: unknown, human?: () => void): void {
+  if (jsonMode) {
+    console.log(JSON.stringify({ ok: true, data }, null, 2));
+    return;
+  }
+  if (human) {
+    human();
+  } else if (typeof data === "string") {
+    console.log(data);
+  } else {
+    console.log(JSON.stringify(data, null, 2));
+  }
+}
+
+function roleContextsFromRuntime(runtime: Awaited<ReturnType<typeof createAgentOsRuntime>>) {
+  return runtime.registry.listRuntimeAgents().then(async (agents) => {
+    const out: Array<{
+      id: string;
+      enabled: boolean;
+      capabilities: string[];
+      outputContract: string;
+      policy: AgentPolicy;
+    }> = [];
+    for (const agent of agents) {
+      const inspected = await runtime.registry.inspectRuntimeAgent(agent.id);
+      if (!inspected) {
+        continue;
+      }
+      out.push({
+        id: inspected.runtime.id,
+        enabled: inspected.runtime.enabled && inspected.template.enabled,
+        capabilities: inspected.effectiveCapabilities,
+        outputContract: inspected.template.outputContract,
+        policy: inspected.effectivePolicy,
+      });
+    }
+    return out;
+  });
+}
+
+function parseLintOrThrow(result: LintResult, context: string): void {
+  if (!result.valid) {
+    throw new CliError("VALIDATION_FAILED", 2, `${context} validation failed`, {
+      findings: result.findings,
+    });
+  }
 }
 
 function buildPolicy(defaultEnabled = true): AgentPolicy {
@@ -112,10 +188,47 @@ function buildRuntimeAgent(roleId: string, template: RoleTemplate): RuntimeAgent
   };
 }
 
+function buildPresetFromArgs(presetId: string, previous?: PresetDefinition): PresetDefinition {
+  const ts = nowIso();
+  const roles = getCsv("roles");
+  const order = getCsv("order");
+  const next: PresetDefinition = {
+    id: presetId,
+    name: getArg("name") ?? previous?.name ?? presetId,
+    description: getArg("description") ?? previous?.description ?? `Preset ${presetId}`,
+    roles: roles.length > 0 ? roles : (previous?.roles ?? []),
+    order: order.length > 0 ? order : (previous?.order ?? (roles.length > 0 ? roles : [])),
+    defaultPolicy: {
+      enabled: parseBool("policy-enabled", previous?.defaultPolicy.enabled ?? true),
+      maxTurns: parseIntSafe("max-turns", previous?.defaultPolicy.maxTurns ?? 6),
+      allowedTools:
+        getCsv("allowed-tools").length > 0
+          ? getCsv("allowed-tools")
+          : (previous?.defaultPolicy.allowedTools ?? []),
+      deniedTools:
+        getCsv("denied-tools").length > 0
+          ? getCsv("denied-tools")
+          : (previous?.defaultPolicy.deniedTools ?? []),
+      constraints:
+        getCsv("constraints").length > 0
+          ? getCsv("constraints")
+          : (previous?.defaultPolicy.constraints ?? []),
+    },
+    taskTypes:
+      getCsv("task-types").length > 0 ? getCsv("task-types") : (previous?.taskTypes ?? ["general"]),
+    tags: getCsv("tags").length > 0 ? getCsv("tags") : (previous?.tags ?? []),
+    enabled: parseBool("enabled", previous?.enabled ?? true),
+    version: getArg("version") ?? previous?.version ?? "1.0.0",
+    createdAt: previous?.createdAt ?? ts,
+    updatedAt: ts,
+  };
+  return next;
+}
+
 async function runCommand() {
   const goal = getArg("goal");
   if (!goal) {
-    throw new Error('Missing goal. Use: run --goal "..."');
+    throw new CliError("BAD_REQUEST", 1, 'Missing goal. Use: run --goal "..."');
   }
   const sessionId = getArg("session") ?? "local-main";
   const runtime = await createAgentOsRuntime();
@@ -131,7 +244,7 @@ async function runCommand() {
       preferredRoles: getCsv("preferred-roles"),
       excludedRoles: getCsv("excluded-roles"),
     });
-    console.log(JSON.stringify(result, null, 2));
+    emitSuccess(result, () => console.log(JSON.stringify(result, null, 2)));
   } finally {
     await runtime.storage.close();
   }
@@ -178,7 +291,7 @@ async function inspectMemoryCommand() {
     const rows = layer
       ? await runtime.memory.inspectByLayer(sessionId, layer, 50)
       : await runtime.memory.inspect(sessionId, 50);
-    console.log(JSON.stringify(rows, null, 2));
+    emitSuccess(rows, () => console.log(JSON.stringify(rows, null, 2)));
   } finally {
     await runtime.storage.close();
   }
@@ -201,7 +314,7 @@ async function listRolesCommand() {
         maxTurns: resolved?.effectivePolicy.maxTurns ?? 0,
       });
     }
-    console.table(rows);
+    emitSuccess(rows, () => console.table(rows));
   } finally {
     await runtime.storage.close();
   }
@@ -210,15 +323,15 @@ async function listRolesCommand() {
 async function inspectRoleCommand() {
   const roleId = getArg("id") ?? argv[1];
   if (!roleId) {
-    throw new Error("Missing role id. Use: inspect-role --id <roleId>");
+    throw new CliError("BAD_REQUEST", 1, "Missing role id. Use: inspect-role --id <roleId>");
   }
   const runtime = await createAgentOsRuntime();
   try {
     const role = await runtime.registry.inspectRuntimeAgent(roleId);
     if (!role) {
-      throw new Error(`RuntimeAgent not found: ${roleId}`);
+      throw new CliError("NOT_FOUND", 3, `RuntimeAgent not found: ${roleId}`);
     }
-    console.log(JSON.stringify(role, null, 2));
+    emitSuccess(role, () => console.log(JSON.stringify(role, null, 2)));
   } finally {
     await runtime.storage.close();
   }
@@ -227,21 +340,16 @@ async function inspectRoleCommand() {
 async function createRoleCommand() {
   const roleId = getArg("id") ?? argv[1];
   if (!roleId) {
-    throw new Error("Missing role id. Use: create-role --id <roleId>");
+    throw new CliError("BAD_REQUEST", 1, "Missing role id. Use: create-role --id <roleId>");
   }
   const runtime = await createAgentOsRuntime();
   try {
     const template = buildRoleTemplate(roleId);
     const runtimeAgent = buildRuntimeAgent(roleId, template);
     const bundle: RoleBundle = { template, runtime: runtimeAgent };
-    const validation = validateRoleBundle(bundle);
-    if (!validation.valid) {
-      throw new Error(
-        `Role validation failed: ${validation.issues.map((x) => `${x.field}=${x.message}`).join("; ")}`,
-      );
-    }
+    parseLintOrThrow(validateRoleBundle(bundle), "role");
     await runtime.registry.importRoleBundle(bundle, false);
-    console.log(`Role created: ${roleId}`);
+    emitSuccess({ id: roleId }, () => console.log(`Role created: ${roleId}`));
   } finally {
     await runtime.storage.close();
   }
@@ -250,13 +358,13 @@ async function createRoleCommand() {
 async function updateRoleCommand() {
   const roleId = getArg("id") ?? argv[1];
   if (!roleId) {
-    throw new Error("Missing role id. Use: update-role --id <roleId>");
+    throw new CliError("BAD_REQUEST", 1, "Missing role id. Use: update-role --id <roleId>");
   }
   const runtime = await createAgentOsRuntime();
   try {
     const inspected = await runtime.registry.inspectRuntimeAgent(roleId);
     if (!inspected) {
-      throw new Error(`RuntimeAgent not found: ${roleId}`);
+      throw new CliError("NOT_FOUND", 3, `RuntimeAgent not found: ${roleId}`);
     }
 
     const templatePatch: Partial<RoleTemplate> = {};
@@ -316,15 +424,8 @@ async function updateRoleCommand() {
       await runtime.registry.updateRuntimeAgent(roleId, runtimePatch);
     }
 
-    const updated = await runtime.registry.exportRoleBundle(roleId);
-    const validation = validateRoleBundle(updated);
-    if (!validation.valid) {
-      throw new Error(
-        `Updated role invalid: ${validation.issues.map((x) => `${x.field}=${x.message}`).join("; ")}`,
-      );
-    }
-
-    console.log(`Role updated: ${roleId}`);
+    parseLintOrThrow(validateRoleBundle(await runtime.registry.exportRoleBundle(roleId)), "role");
+    emitSuccess({ id: roleId }, () => console.log(`Role updated: ${roleId}`));
   } finally {
     await runtime.storage.close();
   }
@@ -333,14 +434,14 @@ async function updateRoleCommand() {
 async function deleteRoleCommand() {
   const roleId = getArg("id") ?? argv[1];
   if (!roleId) {
-    throw new Error("Missing role id. Use: delete-role --id <roleId>");
+    throw new CliError("BAD_REQUEST", 1, "Missing role id. Use: delete-role --id <roleId>");
   }
   const runtime = await createAgentOsRuntime();
   try {
     const bundle = await runtime.registry.exportRoleBundle(roleId);
     await runtime.registry.deleteRuntimeAgent(roleId, runtime.config.presets);
     await runtime.registry.deleteTemplate(bundle.template.id);
-    console.log(`Role deleted: ${roleId}`);
+    emitSuccess({ id: roleId }, () => console.log(`Role deleted: ${roleId}`));
   } finally {
     await runtime.storage.close();
   }
@@ -349,12 +450,12 @@ async function deleteRoleCommand() {
 async function disableRoleCommand() {
   const roleId = getArg("id") ?? argv[1];
   if (!roleId) {
-    throw new Error("Missing role id. Use: disable-role --id <roleId>");
+    throw new CliError("BAD_REQUEST", 1, "Missing role id. Use: disable-role --id <roleId>");
   }
   const runtime = await createAgentOsRuntime();
   try {
     await runtime.registry.disableRuntimeAgent(roleId);
-    console.log(`Role disabled: ${roleId}`);
+    emitSuccess({ id: roleId, enabled: false }, () => console.log(`Role disabled: ${roleId}`));
   } finally {
     await runtime.storage.close();
   }
@@ -363,12 +464,12 @@ async function disableRoleCommand() {
 async function enableRoleCommand() {
   const roleId = getArg("id") ?? argv[1];
   if (!roleId) {
-    throw new Error("Missing role id. Use: enable-role --id <roleId>");
+    throw new CliError("BAD_REQUEST", 1, "Missing role id. Use: enable-role --id <roleId>");
   }
   const runtime = await createAgentOsRuntime();
   try {
     await runtime.registry.enableRuntimeAgent(roleId);
-    console.log(`Role enabled: ${roleId}`);
+    emitSuccess({ id: roleId, enabled: true }, () => console.log(`Role enabled: ${roleId}`));
   } finally {
     await runtime.storage.close();
   }
@@ -378,13 +479,13 @@ async function exportRoleCommand() {
   const roleId = getArg("id") ?? argv[1];
   const file = getArg("file");
   if (!roleId || !file) {
-    throw new Error("Usage: export-role --id <roleId> --file <path.json>");
+    throw new CliError("BAD_REQUEST", 1, "Usage: export-role --id <roleId> --file <path.json>");
   }
   const runtime = await createAgentOsRuntime();
   try {
     const bundle = await runtime.registry.exportRoleBundle(roleId);
     await writeRoleBundleJson(file, bundle);
-    console.log(`Role exported: ${roleId} -> ${file}`);
+    emitSuccess({ id: roleId, file }, () => console.log(`Role exported: ${roleId} -> ${file}`));
   } finally {
     await runtime.storage.close();
   }
@@ -393,21 +494,21 @@ async function exportRoleCommand() {
 async function importRoleCommand() {
   const file = getArg("file");
   if (!file) {
-    throw new Error("Usage: import-role --file <path.json> [--overwrite true|false]");
+    throw new CliError(
+      "BAD_REQUEST",
+      1,
+      "Usage: import-role --file <path.json> [--overwrite true|false]",
+    );
   }
   const overwrite = parseBool("overwrite", false);
   const bundle = await readRoleBundleJson(file);
-  const validation = validateRoleBundle(bundle);
-  if (!validation.valid) {
-    throw new Error(
-      `Role import validation failed: ${validation.issues.map((x) => `${x.field}=${x.message}`).join("; ")}`,
-    );
-  }
-
+  parseLintOrThrow(validateRoleBundle(bundle), "role");
   const runtime = await createAgentOsRuntime();
   try {
     await runtime.registry.importRoleBundle(bundle, overwrite);
-    console.log(`Role imported: ${bundle.runtime.id}`);
+    emitSuccess({ id: bundle.runtime.id }, () =>
+      console.log(`Role imported: ${bundle.runtime.id}`),
+    );
   } finally {
     await runtime.storage.close();
   }
@@ -416,7 +517,6 @@ async function importRoleCommand() {
 async function validateRoleCommand() {
   const roleId = getArg("id");
   const file = getArg("file");
-
   let bundle: RoleBundle;
   if (file) {
     bundle = await readRoleBundleJson(file);
@@ -428,45 +528,187 @@ async function validateRoleCommand() {
       await runtime.storage.close();
     }
   } else {
-    throw new Error("Usage: validate-role --id <roleId> | --file <path.json>");
+    throw new CliError("BAD_REQUEST", 1, "Usage: validate-role --id <roleId> | --file <path.json>");
   }
 
   const validation = validateRoleBundle(bundle);
-  console.log(JSON.stringify(validation, null, 2));
+  emitSuccess(validation, () => console.log(JSON.stringify(validation, null, 2)));
   if (!validation.valid) {
-    process.exitCode = 1;
+    throw new CliError("VALIDATION_FAILED", 2, "role validation failed", validation);
   }
 }
 
 async function listPresetsCommand() {
-  const runtime = await createAgentOsRuntime();
-  try {
+  let config = freshConfig();
+  if (configExists()) {
+    const runtime = await createAgentOsRuntime();
+    try {
+      config = runtime.config;
+    } finally {
+      await runtime.storage.close();
+    }
+  }
+  const presets = listPresets(config.presets);
+  emitSuccess(presets, () => {
     console.table(
-      listPresets(runtime.config.presets).map((preset) => ({
+      presets.map((preset) => ({
         id: preset.id,
         name: preset.name,
         enabled: preset.enabled,
-        roles: preset.roleOrder.join(","),
+        version: preset.version,
+        roles: preset.order.join(","),
         taskTypes: preset.taskTypes.join(","),
       })),
     );
-  } finally {
-    await runtime.storage.close();
-  }
+  });
 }
 
 async function inspectPresetCommand() {
   const id = getArg("id") ?? argv[1];
   if (!id) {
-    throw new Error("Missing preset id. Use: inspect-preset --id <presetId>");
+    throw new CliError("BAD_REQUEST", 1, "Missing preset id. Use: inspect-preset --id <presetId>");
+  }
+  let config = freshConfig();
+  if (configExists()) {
+    const runtime = await createAgentOsRuntime();
+    try {
+      config = runtime.config;
+    } finally {
+      await runtime.storage.close();
+    }
+  }
+  const preset = inspectPreset(config.presets, id);
+  if (!preset) {
+    throw new CliError("NOT_FOUND", 3, `Preset not found: ${id}`);
+  }
+  emitSuccess(preset, () => console.log(JSON.stringify(preset, null, 2)));
+}
+
+async function createPresetCommand() {
+  const id = getArg("id") ?? argv[1];
+  if (!id) {
+    throw new CliError("BAD_REQUEST", 1, "Missing preset id. Use: create-preset --id <presetId>");
   }
   const runtime = await createAgentOsRuntime();
   try {
-    const preset = inspectPreset(runtime.config.presets, id);
-    if (!preset) {
-      throw new Error(`Preset not found: ${id}`);
+    if (runtime.config.presets[id]) {
+      throw new CliError("CONFLICT", 3, `Preset already exists: ${id}`);
     }
-    console.log(JSON.stringify(preset, null, 2));
+    const preset = buildPresetFromArgs(id);
+    const lint = validatePreset(preset, await roleContextsFromRuntime(runtime));
+    parseLintOrThrow(lint, "preset");
+    await upsertPreset(preset);
+    emitSuccess({ id }, () => console.log(`Preset created: ${id}`));
+  } finally {
+    await runtime.storage.close();
+  }
+}
+
+async function updatePresetCommand() {
+  const id = getArg("id") ?? argv[1];
+  if (!id) {
+    throw new CliError("BAD_REQUEST", 1, "Missing preset id. Use: update-preset --id <presetId>");
+  }
+  const runtime = await createAgentOsRuntime();
+  try {
+    const previous = runtime.config.presets[id];
+    if (!previous) {
+      throw new CliError("NOT_FOUND", 3, `Preset not found: ${id}`);
+    }
+    const preset = buildPresetFromArgs(id, previous);
+    const lint = validatePreset(preset, await roleContextsFromRuntime(runtime));
+    parseLintOrThrow(lint, "preset");
+    await upsertPreset(preset);
+    emitSuccess({ id }, () => console.log(`Preset updated: ${id}`));
+  } finally {
+    await runtime.storage.close();
+  }
+}
+
+async function deletePresetCommand() {
+  const id = getArg("id") ?? argv[1];
+  if (!id) {
+    throw new CliError("BAD_REQUEST", 1, "Missing preset id. Use: delete-preset --id <presetId>");
+  }
+  await deletePreset(id);
+  emitSuccess({ id }, () => console.log(`Preset deleted: ${id}`));
+}
+
+async function exportPresetCommand() {
+  const id = getArg("id") ?? argv[1];
+  const file = getArg("file");
+  if (!id || !file) {
+    throw new CliError("BAD_REQUEST", 1, "Usage: export-preset --id <presetId> --file <path.json>");
+  }
+  let config = freshConfig();
+  if (configExists()) {
+    const runtime = await createAgentOsRuntime();
+    try {
+      config = runtime.config;
+    } finally {
+      await runtime.storage.close();
+    }
+  }
+  const preset = config.presets[id];
+  if (!preset) {
+    throw new CliError("NOT_FOUND", 3, `Preset not found: ${id}`);
+  }
+  await writePresetBundleFile(file, preset);
+  emitSuccess({ id, file }, () => console.log(`Preset exported: ${id} -> ${file}`));
+}
+
+async function importPresetCommand() {
+  const file = getArg("file");
+  if (!file) {
+    throw new CliError(
+      "BAD_REQUEST",
+      1,
+      "Usage: import-preset --file <path.json> [--overwrite true|false]",
+    );
+  }
+  const overwrite = parseBool("overwrite", false);
+  const preset = await readPresetBundleFile(file);
+  const runtime = await createAgentOsRuntime();
+  try {
+    if (!overwrite && runtime.config.presets[preset.id]) {
+      throw new CliError("CONFLICT", 3, `Preset already exists: ${preset.id}`);
+    }
+    const lint = validatePreset(preset, await roleContextsFromRuntime(runtime));
+    parseLintOrThrow(lint, "preset");
+    await upsertPreset(preset);
+    emitSuccess({ id: preset.id }, () => console.log(`Preset imported: ${preset.id}`));
+  } finally {
+    await runtime.storage.close();
+  }
+}
+
+async function validatePresetCommand() {
+  const id = getArg("id");
+  const file = getArg("file");
+  const runtime = await createAgentOsRuntime();
+  try {
+    let preset: PresetDefinition;
+    if (file) {
+      preset = await readPresetBundleFile(file);
+    } else if (id) {
+      const found = runtime.config.presets[id];
+      if (!found) {
+        throw new CliError("NOT_FOUND", 3, `Preset not found: ${id}`);
+      }
+      preset = found;
+    } else {
+      throw new CliError(
+        "BAD_REQUEST",
+        1,
+        "Usage: validate-preset --id <presetId> | --file <path.json>",
+      );
+    }
+
+    const lint = validatePreset(preset, await roleContextsFromRuntime(runtime));
+    emitSuccess(lint, () => console.log(JSON.stringify(lint, null, 2)));
+    if (!lint.valid) {
+      throw new CliError("VALIDATION_FAILED", 2, "preset validation failed", lint);
+    }
   } finally {
     await runtime.storage.close();
   }
@@ -481,14 +723,14 @@ async function main() {
   if (!command || command === "help" || command === "--help" || command === "-h") {
     console.log(
       [
-        "Usage: node --import tsx src/cli/agentos.ts <command> [options]",
+        "Usage: node --import tsx src/cli/agentos.ts <command> [options] [--json]",
         "Commands:",
         "  run --goal <text> [--roles a,b] [--preset <id>] [--required-capabilities a,b] [--preferred-roles a,b] [--excluded-roles a,b]",
         "  chat [--roles a,b] [--preset <id>]",
-        "  list-roles",
+        "  list-roles | list-agents",
         "  inspect-role --id <roleId>",
-        "  create-role --id <roleId> [--name <name>] [--system-instruction <text>] [--capabilities a,b]",
-        "  update-role --id <roleId> [patch fields]",
+        "  create-role --id <roleId> ...",
+        "  update-role --id <roleId> ...",
         "  disable-role --id <roleId>",
         "  enable-role --id <roleId>",
         "  delete-role --id <roleId>",
@@ -497,8 +739,13 @@ async function main() {
         "  validate-role --id <roleId> | --file <path.json>",
         "  list-presets",
         "  inspect-preset --id <presetId>",
+        "  create-preset --id <presetId> --roles a,b --order a,b",
+        "  update-preset --id <presetId> [patch fields]",
+        "  delete-preset --id <presetId>",
+        "  export-preset --id <presetId> --file <path.json>",
+        "  import-preset --file <path.json> [--overwrite true|false]",
+        "  validate-preset --id <presetId> | --file <path.json>",
         "  inspect-memory [--session <id>] [--layer short-term|long-term|project-entity]",
-        "  list-agents (compat alias of list-roles)",
       ].join("\n"),
     );
     return;
@@ -550,15 +797,57 @@ async function main() {
     case "inspect-preset":
       await inspectPresetCommand();
       return;
+    case "create-preset":
+      await createPresetCommand();
+      return;
+    case "update-preset":
+      await updatePresetCommand();
+      return;
+    case "delete-preset":
+      await deletePresetCommand();
+      return;
+    case "export-preset":
+      await exportPresetCommand();
+      return;
+    case "import-preset":
+      await importPresetCommand();
+      return;
+    case "validate-preset":
+      await validatePresetCommand();
+      return;
     case "list-agents":
       await listAgentsAliasCommand();
       return;
     default:
-      throw new Error(`Unknown command: ${command}`);
+      throw new CliError("UNKNOWN_COMMAND", 1, `Unknown command: ${command}`);
   }
 }
 
 main().catch((err) => {
-  console.error(`[agentos] ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
+  const cliErr =
+    err instanceof CliError
+      ? err
+      : new CliError("UNEXPECTED_ERROR", 1, err instanceof Error ? err.message : String(err));
+  if (jsonMode) {
+    console.error(
+      JSON.stringify(
+        {
+          ok: false,
+          error: {
+            code: cliErr.code,
+            message: cliErr.message,
+            details: cliErr.details,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    console.error(`[agentos] ${cliErr.code}: ${cliErr.message}`);
+    if (cliErr.details) {
+      console.error(JSON.stringify(cliErr.details, null, 2));
+    }
+  }
+  process.exitCode = cliErr.exitCode;
 });

@@ -64,11 +64,13 @@ export interface PresetDefinition {
   id: string;
   name: string;
   description: string;
-  roleOrder: string[];
-  defaultStrategy: string;
+  roles: string[];
+  order: string[];
+  defaultPolicy: AgentPolicy;
   taskTypes: string[];
   tags: string[];
   enabled: boolean;
+  version: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -140,15 +142,16 @@ export interface MemoryQuery {
   limit?: number;
 }
 
-export interface RoleValidationIssue {
+export interface LintFinding {
   level: "error" | "warning";
-  field: string;
+  code: string;
   message: string;
+  target: string;
 }
 
-export interface RoleValidationResult {
+export interface LintResult {
   valid: boolean;
-  issues: RoleValidationIssue[];
+  findings: LintFinding[];
 }
 
 export interface RoleBundle {

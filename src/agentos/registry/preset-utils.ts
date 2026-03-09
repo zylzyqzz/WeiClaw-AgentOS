@@ -30,6 +30,6 @@ export function findPresetReferences(
   roleId: string,
 ): string[] {
   return Object.values(presets)
-    .filter((preset) => preset.roleOrder.includes(roleId))
+    .filter((preset) => preset.roles.includes(roleId) || preset.order.includes(roleId))
     .map((preset) => preset.id);
 }

@@ -151,8 +151,8 @@ export class AgentRegistry {
   async importRoleBundle(bundle: RoleBundle, overwrite = false): Promise<void> {
     const validation = validateRoleBundle(bundle);
     if (!validation.valid) {
-      const first = validation.issues.find((x) => x.level === "error");
-      throw new Error(`Invalid role bundle: ${first?.field}: ${first?.message}`);
+      const first = validation.findings.find((x) => x.level === "error");
+      throw new Error(`Invalid role bundle: ${first?.target}: ${first?.message}`);
     }
 
     const existingRole = await this.storage.getRuntimeAgent(bundle.runtime.id);

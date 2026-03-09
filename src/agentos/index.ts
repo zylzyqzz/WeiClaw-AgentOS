@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./config/loader.js";
+export * from "./config/store.js";
 export * from "./storage/storage.js";
 export * from "./storage/factory.js";
 export * from "./storage/sqlite-storage.js";

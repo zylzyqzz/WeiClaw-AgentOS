@@ -54,6 +54,9 @@
 - 角色生命周期闭环（create/update/enable/disable/delete/export/import/validate）
 - 任务路由优先级：`--roles` > `--preset` > 动态能力路由
 - 路由结果可解释输出：`routeSummary` / `selectedRoles` / `selectionReasons`
+- preset 生命周期闭环（create/update/delete/export/import/validate）
+- 语义 lint（policy/capability/memoryScope/preset 引用与顺序冲突）
+- 机器可读输出（`--json` + 统一错误结构 + 稳定 exit code）
 - 三层记忆（short-term / long-term / project-entity）
 - SQLite 优先 + 文件回退
 
@@ -66,10 +69,17 @@ pnpm agentos -- update-role --id qa --goals "prevent regressions" --version 1.0.
 pnpm agentos -- validate-role --id qa
 pnpm agentos -- export-role --id qa --file /tmp/qa-role.json
 pnpm agentos -- import-role --file /tmp/qa-role.json --overwrite true
+pnpm agentos -- validate-role --id qa --json
 pnpm agentos -- list-presets
+pnpm agentos -- create-preset --id qa-only --roles reviewer --order reviewer --task-types review,qa
+pnpm agentos -- update-preset --id qa-only --version 1.0.1 --enabled true
+pnpm agentos -- validate-preset --id qa-only
+pnpm agentos -- export-preset --id qa-only --file /tmp/qa-only-preset.json
+pnpm agentos -- import-preset --file /tmp/qa-only-preset.json --overwrite true
 pnpm agentos -- inspect-preset --id default-demo
 pnpm agentos -- run --goal "实现本地多智能体 alpha" --roles commander,qa
 pnpm agentos -- run --goal "检查风险" --preset default-demo --required-capabilities review
+pnpm agentos -- run --goal "机器可读路由输出" --preset default-demo --json
 ```
 
 ## 快速开始

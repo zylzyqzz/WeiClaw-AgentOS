@@ -56,6 +56,12 @@ Role lifecycle commands:
 - `export-role`
 - `import-role`
 - `validate-role`
+- `create-preset`
+- `update-preset`
+- `delete-preset`
+- `export-preset`
+- `import-preset`
+- `validate-preset`
 
 Preset commands:
 
@@ -65,3 +71,14 @@ Preset commands:
 Compatibility alias:
 
 - `list-agents` (alias of `list-roles`)
+
+Machine-readable mode:
+
+- `--json` on core commands (`run`, `validate-role`, `validate-preset`, `inspect-role`, `inspect-preset`, `list-roles`, `list-presets`)
+- unified error object: `{ ok: false, error: { code, message, details } }`
+- stable exit codes (`0` success, `2` validation failed, `3` not found/conflict, `1` generic)
+
+Semantic lint output:
+
+- schema: `level` / `code` / `message` / `target`
+- levels: `error` / `warning`

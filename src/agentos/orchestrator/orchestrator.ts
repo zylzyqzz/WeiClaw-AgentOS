@@ -166,13 +166,38 @@ export class Orchestrator {
     const presetId = request.preset ?? this.config.defaultPreset;
     if (shouldUsePreset && presetId) {
       const preset = getPreset(this.config, presetId);
-      const roleIds = uniq(preset.roleOrder).filter(
+      const roleIds = uniq(preset.order.length > 0 ? preset.order : preset.roles).filter(
         (id) => !(request.excludedRoles ?? []).includes(id),
       );
-      const existingIds = (await this.registry.listRuntimeAgents()).map((x) => x.id);
-      const validation = validatePreset(preset, existingIds);
+      const roleContexts = [] as Array<{
+        id: string;
+        enabled: boolean;
+        capabilities: string[];
+        outputContract: string;
+        policy: {
+          enabled: boolean;
+          maxTurns: number;
+          allowedTools: string[];
+          deniedTools: string[];
+          constraints: string[];
+        };
+      }>;
+      for (const agentId of roleIds) {
+        const inspected = await this.registry.inspectRuntimeAgent(agentId);
+        if (!inspected) {
+          continue;
+        }
+        roleContexts.push({
+          id: inspected.runtime.id,
+          enabled: inspected.runtime.enabled && inspected.template.enabled,
+          capabilities: inspected.effectiveCapabilities,
+          outputContract: inspected.template.outputContract,
+          policy: inspected.effectivePolicy,
+        });
+      }
+      const validation = validatePreset(preset, roleContexts);
       if (!validation.valid) {
-        const first = validation.issues.find((x) => x.level === "error");
+        const first = validation.findings.find((x) => x.level === "error");
         throw new Error(`Invalid preset ${preset.id}: ${first?.message ?? "unknown error"}`);
       }
 
@@ -183,7 +208,7 @@ export class Orchestrator {
           selected,
           reasons: [
             `preset selected: ${preset.id}`,
-            `preset strategy: ${preset.defaultStrategy}`,
+            `preset defaultPolicy.maxTurns: ${preset.defaultPolicy.maxTurns}`,
             `preset roles resolved: ${selected.map((x) => x.runtime.id).join(", ")}`,
           ],
         };

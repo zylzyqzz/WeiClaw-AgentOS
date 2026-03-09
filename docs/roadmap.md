@@ -4,9 +4,12 @@
 
 - dynamic role model (`RoleTemplate` + `RuntimeAgent`)
 - role lifecycle closed loop (create/update/enable/disable/delete/import/export/validate)
+- preset lifecycle closed loop (create/update/delete/import/export/validate)
 - routing with explicit roles / preset / dynamic capability selection
 - preset inspection and validation
 - structured run output with route reasoning
+- semantic lint findings (`level/code/message/target`)
+- machine-readable CLI mode (`--json` + unified error payload/exit codes)
 - local-first persistence (SQLite primary, file fallback)
 
 ## Next
